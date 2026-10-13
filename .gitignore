@@ -12,3 +12,6 @@ certbot/
 .DS_Store
 *.swp
 *.swo
+
+# JetBrains IDE
+.idea/
