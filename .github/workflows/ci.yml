@@ -49,3 +49,67 @@ jobs:
       - name: Stop stack
         if: always()
         run: make down
+
+  # Build, push and cosign-sign the image on push to main, after every check passed.
+  # The infra-runner deployer verifies the signature against this workflow's identity
+  # (.infra-runner.plugin: .../infra-edge/.github/workflows/ci.yml@refs/heads/main) —
+  # moving this job to another workflow file breaks deploys until the descriptor follows.
+  # Self-hosted runner (infra-runner): no Docker daemon, images are built with Buildah.
+  publish:
+    needs: [lint, config, smoke]
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # cosign keyless signing (OIDC)
+    env:
+      IMAGE: ghcr.io/uye-ltd/infra-edge
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Buildah storage
+        run: |
+          # containers/storage requires runRoot when graphRoot is set explicitly.
+          printf '%s\n' \
+            '[storage]' \
+            '  driver = "overlay"' \
+            '  graphRoot = "/kaniko"' \
+            '  runRoot = "/tmp/buildah-run"' \
+            '' \
+            '[storage.options]' \
+            '' \
+            '  [storage.options.overlay]' \
+            '    mount_program = "/usr/bin/fuse-overlayfs"' \
+            > /etc/containers/storage.conf
+
+      - name: Build and push
+        id: build
+        run: |
+          buildah build \
+            --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${GITHUB_SHA}" \
+            --isolation=chroot \
+            .
+          buildah push --digestfile /tmp/digest.txt "${IMAGE}:latest"
+          buildah push "${IMAGE}:${GITHUB_SHA}"
+          echo "digest=$(cat /tmp/digest.txt)" >> "$GITHUB_OUTPUT"
+
+      # Sign by digest: tags are mutable.
+      - name: Sign image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cosign sign --yes \
+            --registry-username "${REGISTRY_USER}" \
+            --registry-password "${REGISTRY_PASSWORD}" \
+            "${IMAGE}@${DIGEST}"

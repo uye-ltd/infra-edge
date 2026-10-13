@@ -1,13 +1,17 @@
+# Fixed project name: the infra-runner deployer, scripts/certbot-renew.sh and manual
+# commands must all address the same project, whatever the checkout directory is called.
+name: infra-edge
+
 services:
 
   # ---------------------------------------------------------------------------
   # NGINX Edge Gateway
   # ---------------------------------------------------------------------------
   nginx:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: uye-edge:latest
+    # Built and cosign-signed by CI (.github/workflows/ci.yml, job publish); the
+    # infra-runner deployer pulls new digests and recreates this service
+    # (.infra-runner.plugin). Local builds: docker-compose.local.yml.
+    image: ghcr.io/uye-ltd/infra-edge:latest
     container_name: uye-edge
     restart: unless-stopped
     ports:
@@ -129,4 +133,7 @@ volumes:
 # ---------------------------------------------------------------------------
 networks:
   edge:
+    # Fixed name (not <project>_edge): the Go Gateway stack joins it as
+    # `external: true` under this name.
+    name: uye-edge
     driver: bridge

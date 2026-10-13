@@ -2,7 +2,7 @@
 # certbot-renew.sh — renew Let's Encrypt certificates and reload nginx.
 #
 # Intended to be run as a cron job on the host or inside a scheduled container:
-#   0 3 * * * /opt/uye-edge/scripts/certbot-renew.sh >> /var/log/certbot-renew.log 2>&1
+#   0 3 * * * /home/ghrunner/infra-edge/scripts/certbot-renew.sh >> /home/ghrunner/certbot-renew.log 2>&1
 set -euo pipefail
 
 COMPOSE_FILE="$(cd "$(dirname "$0")/.." && pwd)/docker-compose.yml"

@@ -32,7 +32,9 @@ Browser / Client
 uye-edge/
 ├── Dockerfile
 ├── docker-compose.yml          # Production compose
-├── docker-compose.local.yml    # Local overrides (local cert + stub upstream)
+├── docker-compose.local.yml    # Local overrides (local build, local cert, stub upstream)
+├── docker-compose.infra-runner.yml # Overlay for the infra-runner deployer (plugin mounts)
+├── .infra-runner.plugin        # infra-runner deployer plugin descriptor
 ├── Makefile                    # Local shortcuts (`make help`)
 ├── .env.example                # All supported environment variables (the only tracked .env*)
 ├── nginx/
@@ -57,6 +59,7 @@ uye-edge/
 │   ├── init-local-env.sh       # Local: generate .env.local from .env.example
 │   ├── generate-local-certs.sh # Local: certs/local/ via mkcert (fallback: openssl)
 │   ├── certbot-renew.sh        # Production: renew Let's Encrypt certs + reload
+│   ├── wait-healthy.sh         # Production: deployer post-deploy hook (wait for healthy)
 │   └── healthcheck.sh          # Manual health probe
 ├── local/
 │   ├── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway locally
@@ -126,32 +129,74 @@ hooks, `make test-config` and `make init up smoke` on every PR and push to `main
 
 ---
 
-## Production setup
+## Production deploy (infra-runner)
 
-### 1. Configure environment
-```bash
-cp .env.example .env
-# Edit .env — set NGINX_DOMAIN, CERTBOT_EMAIL, NGINX_UPSTREAM_HOST, etc.
-```
+The image is built, pushed to `ghcr.io/uye-ltd/infra-edge` and cosign-signed by the
+`publish` job in `.github/workflows/ci.yml` on every push to `main` (after lint, config
+and smoke pass), on the self-hosted [infra-runner](https://github.com/uye-ltd/infra-runner).
+The infra-runner **deployer** treats this repo as a plugin (`.infra-runner.plugin`): each
+poll cycle it pulls `infra-edge:latest`, verifies the signature against the `ci.yml`
+identity, runs `docker compose up -d --no-deps nginx` and then `scripts/wait-healthy.sh`.
+No SSH, no deploy job.
 
-### 2. Issue a Let's Encrypt certificate (first run)
+The GHCR package must be **public** (the deployer uses a GitHub App token, which cannot
+read GHCR). After the first `publish` run: package settings → Change visibility → Public.
+
+### First-time server setup (as `ghrunner`, next to `~/infra-runner`)
 ```bash
-# Start nginx on HTTP only first (comment out https-server include temporarily)
+git clone https://github.com/uye-ltd/infra-edge ~/infra-edge
+cd ~/infra-edge
+cp .env.example .env    # set NGINX_DOMAIN, CERTBOT_EMAIL, cert paths, NGINX_UPSTREAM_*
+
+# First certificate: certbot standalone on :80 before nginx exists
+# (nginx cannot start without the certificate files).
+docker compose --profile certbot run --rm -p 80:80 certbot \
+    certonly --standalone --email "$CERTBOT_EMAIL" --agree-tos --no-eff-email \
+    -d "$NGINX_DOMAIN" -d "www.$NGINX_DOMAIN"
+
+docker compose pull nginx
 docker compose up -d nginx
+```
+(`CERTBOT_EMAIL` / `NGINX_DOMAIN` above are shell variables — export them or type the values.)
 
-# Issue certificate via webroot challenge
-docker compose --profile certbot run --rm certbot
+Register the plugin in `~/infra-runner/.env`, then recreate the deployer:
+```bash
+EDGE_COMPOSE_DIR=/home/ghrunner/infra-edge
+# append to the existing list (setting COMPOSE_FILE disables override.yml auto-discovery):
+COMPOSE_FILE=docker-compose.yml:<existing overlays>:../infra-edge/docker-compose.infra-runner.yml
+```
+```bash
+cd ~/infra-runner && docker compose up -d deployer
 ```
 
-### 3. Start the full stack
+Cron (`crontab -e` as `ghrunner`):
 ```bash
-docker compose up -d
+# Keep the checkout current: compose file, descriptor and hook script are read from it
+*/5 * * * * git -C /home/ghrunner/infra-edge pull --ff-only origin main
+# Certificate renewal + nginx reload
+0 3 * * * /home/ghrunner/infra-edge/scripts/certbot-renew.sh >> /home/ghrunner/certbot-renew.log 2>&1
 ```
 
-### 4. Schedule certificate renewal
-```bash
-# Add to crontab on the host
-echo "0 3 * * * /opt/uye-edge/scripts/certbot-renew.sh >> /var/log/certbot-renew.log 2>&1" | crontab -
+### What deploys automatically
+
+| Change | How it reaches the server |
+|---|---|
+| `nginx/**`, `Dockerfile` (everything inside the image) | automatically: new signed image → deployer recreates nginx |
+| `docker-compose.yml`, `.infra-runner.plugin`, `scripts/wait-healthy.sh` | after the `git pull` cron; compose changes apply with the next image update or `docker compose up -d nginx` |
+| server `.env` | manual `docker compose up -d nginx` |
+
+A failed signature check, `compose up` or health wait marks the deployer's
+`GET :8080/health` as `503`; there is no automatic rollback. Deployer logs:
+`docker compose -f ~/infra-runner/docker-compose.yml logs -f --no-log-prefix deployer | jq .`
+
+### Upstream network
+The `edge` network has a fixed name, `uye-edge`. The Go Gateway stack joins it as an
+external network and must be up before nginx starts (nginx resolves
+`NGINX_UPSTREAM_HOST` at startup):
+```yaml
+networks:
+  uye-edge:
+    external: true
 ```
 
 ---

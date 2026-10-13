@@ -1,5 +1,8 @@
 FROM nginx:1.27-alpine
 
+# Links the GHCR package to the repository.
+LABEL org.opencontainers.image.source="https://github.com/uye-ltd/infra-edge"
+
 # Install curl for healthcheck
 RUN apk add --no-cache curl
 
