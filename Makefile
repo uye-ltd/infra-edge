@@ -4,7 +4,7 @@ ENV_FILE ?= .env.local
 COMPOSE  := docker compose --env-file $(ENV_FILE) -f docker-compose.yml -f docker-compose.local.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help init env certs up down restart reload nginx-t logs ps
+.PHONY: help init env certs certs-force up down restart reload nginx-t logs ps
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -14,8 +14,11 @@ init: env certs ## One-time local setup: .env.local + TLS certs
 env: ## Generate .env.local from .env.example (keeps an existing file)
 	@scripts/init-local-env.sh
 
-certs: ## Generate local TLS certs in certs/local (keeps existing ones)
-	@test -f certs/local/cert.pem || scripts/generate-self-signed.sh
+certs: ## Generate local TLS certs in certs/local (mkcert if installed; keeps existing ones)
+	@scripts/generate-local-certs.sh
+
+certs-force: ## Regenerate local TLS certs (e.g. after installing mkcert or adding a host)
+	@scripts/generate-local-certs.sh --force
 
 $(ENV_FILE):
 	@echo "$(ENV_FILE) is missing — run 'make init' first." >&2; exit 1

@@ -4,8 +4,10 @@
 #   docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.local.yml up --build
 #
 # Differences from production:
-#   - Local TLS certificate in ./certs/local (scripts/generate-self-signed.sh)
+#   - Local TLS certificate in ./certs/local (scripts/generate-local-certs.sh;
+#     mkcert if installed, otherwise self-signed openssl)
 #   - Stub Go Gateway using nginx:alpine echoing a JSON response
+#   - Local-only demo site on https://demo.localhost (local/sites/) + demo-stub
 #   - All profiles active by default (no certbot)
 #   - nginx-exporter always enabled
 #
@@ -25,8 +27,14 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/snippets:/etc/nginx/snippets:ro
       - ./nginx/templates:/etc/nginx/templates:ro
+      # Local-only static sites (demo.localhost)
+      - ./local/sites:/etc/nginx/local-sites:ro
     env_file: !override
       - .env.local
+    # nginx resolves upstream hosts at startup — demo-stub must exist first
+    depends_on:
+      demo-stub:
+        condition: service_started
 
   go-gateway:
     image: nginx:alpine
@@ -36,6 +44,15 @@ services:
     networks:
       - edge
     profiles: !reset []   # always active locally
+
+  # Upstream of the local-only demo site (local/sites/demo.conf)
+  demo-stub:
+    image: nginx:alpine
+    container_name: uye-demo-stub-local
+    volumes:
+      - ./local/demo-stub.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - edge
 
   nginx-exporter:
     profiles: !reset []   # always active locally

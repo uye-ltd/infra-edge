@@ -55,11 +55,13 @@ uye-edge/
 │       └── app.conf.template   # Starting point for a new application site
 ├── scripts/
 │   ├── init-local-env.sh       # Local: generate .env.local from .env.example
-│   ├── generate-self-signed.sh # Local: create self-signed cert in certs/local/
+│   ├── generate-local-certs.sh # Local: certs/local/ via mkcert (fallback: openssl)
 │   ├── certbot-renew.sh        # Production: renew Let's Encrypt certs + reload
 │   └── healthcheck.sh          # Manual health probe
 ├── local/
-│   └── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway locally
+│   ├── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway locally
+│   ├── demo-stub.conf          # upstream stub for the demo site
+│   └── sites/demo.conf         # local-only second site on demo.localhost
 └── certbot/                    # Certbot data (mounted as a Docker volume)
 ```
 
@@ -72,8 +74,13 @@ dev server, **production** = `docker-compose.yml` + `.env`.
 
 ### 1. One-time setup
 ```bash
+# Optional, for browser-trusted certs (no warnings, no --cacert):
+brew install mkcert && mkcert -install
+
 make init   # .env.local (generated from .env.example) + certs/local/*
 ```
+Without mkcert a self-signed cert is generated; after installing mkcert later run
+`make certs-force`.
 
 ### 2. Start the stack
 ```bash
@@ -86,8 +93,14 @@ curl --cacert certs/local/ca.pem https://localhost/healthz
 # {"status":"ok","service":"uye-edge"}
 
 curl --cacert certs/local/ca.pem https://localhost/api/users
-# {"service":"go-gateway-stub","path":"/api/users","message":"..."}
+# {"service":"go-gateway-stub","host":"localhost","path":"/api/users",...}
+
+curl --cacert certs/local/ca.pem https://demo.localhost/
+# {"service":"demo-stub","host":"demo.localhost","path":"/"}
 ```
+
+`demo.localhost` is a local-only second site (`local/sites/demo.conf`) for checking
+multi-site behaviour; `*.localhost` resolves to 127.0.0.1 without `/etc/hosts` edits.
 
 Other targets: `make reload` (static config), `make restart` (templates), `make logs`,
 `make down`; see `make help`.

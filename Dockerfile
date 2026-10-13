@@ -20,6 +20,9 @@ COPY nginx/templates/ /etc/nginx/templates/
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/generated
 RUN mkdir -p /etc/nginx/generated
 
+# Mount point for local-only sites (docker-compose.local.yml); empty in production
+RUN mkdir -p /etc/nginx/local-sites
+
 # Certbot webroot challenge directory
 RUN mkdir -p /var/www/certbot
 
