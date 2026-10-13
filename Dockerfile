@@ -9,8 +9,16 @@ COPY nginx/nginx.conf /etc/nginx/nginx.conf
 # Copy static modular configs
 COPY nginx/conf.d/ /etc/nginx/conf.d/
 
+# Copy reusable server/location snippets (included by templates)
+COPY nginx/snippets/ /etc/nginx/snippets/
+
 # Copy envsubst templates (processed at container startup by official entrypoint)
 COPY nginx/templates/ /etc/nginx/templates/
+
+# Render templates outside conf.d/ so the root filesystem can stay read-only
+# (docker-compose.yml mounts a tmpfs here) and conf.d/ can be bind-mounted :ro.
+ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/generated
+RUN mkdir -p /etc/nginx/generated
 
 # Certbot webroot challenge directory
 RUN mkdir -p /var/www/certbot

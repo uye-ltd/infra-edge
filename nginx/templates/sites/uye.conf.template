@@ -1,0 +1,44 @@
+# ---- Site: uye (UYE platform API) --------------------------------------------
+# TLS termination + reverse proxy to the Go Gateway upstream (go_gateway,
+# defined in upstream.conf.template). Rate-limit zones api_per_ip / auth /
+# general are defined in rate-limit.conf.template.
+server {
+    include /etc/nginx/snippets/tls.conf;
+    server_name   ${NGINX_DOMAIN} www.${NGINX_DOMAIN};
+
+    # ---- TLS certificates (managed by Certbot / cert-manager) ----------------
+    ssl_certificate      ${NGINX_SSL_CERT_PATH};
+    ssl_certificate_key  ${NGINX_SSL_KEY_PATH};
+    ssl_trusted_certificate ${NGINX_SSL_CHAIN_PATH};
+
+    include /etc/nginx/snippets/security-headers.conf;
+    include /etc/nginx/snippets/guard-rails.conf;
+    include /etc/nginx/snippets/health.conf;
+
+    # ---- Authentication routes (strictest rate limit) ------------------------
+    # Must appear before /api/ so the longer prefix wins.
+    location ^~ /api/auth/ {
+        limit_req   zone=auth  burst=${NGINX_RATE_LIMIT_AUTH_BURST}  nodelay;
+        limit_conn  conn_per_ip  ${NGINX_CONN_LIMIT_PER_IP};
+
+        proxy_pass  http://go_gateway;
+    }
+
+    # ---- General API routes --------------------------------------------------
+    location /api/ {
+        limit_req   zone=api_per_ip  burst=${NGINX_RATE_LIMIT_BURST}  nodelay;
+        limit_conn  conn_per_ip  ${NGINX_CONN_LIMIT_PER_IP};
+
+        proxy_pass  http://go_gateway;
+    }
+
+    # ---- Default catch-all ---------------------------------------------------
+    location / {
+        limit_req   zone=general  burst=${NGINX_RATE_LIMIT_GENERAL_BURST}  nodelay;
+        limit_conn  conn_per_ip  ${NGINX_CONN_LIMIT_PER_IP};
+
+        proxy_pass  http://go_gateway;
+    }
+
+    include /etc/nginx/snippets/error-pages.conf;
+}

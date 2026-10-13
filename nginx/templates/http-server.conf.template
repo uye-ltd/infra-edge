@@ -1,11 +1,11 @@
 # ---- HTTP server -------------------------------------------------------------
-# Accepts plain HTTP on port 80.
+# Default server on port 80 for ALL hosts (platform and application sites).
 # Serves the ACME challenge webroot for Let's Encrypt certificate issuance.
 # Redirects all other traffic to HTTPS (301 permanent).
 server {
-    listen       80;
-    listen  [::]:80;
-    server_name  ${NGINX_DOMAIN} www.${NGINX_DOMAIN};
+    listen       80 default_server;
+    listen  [::]:80 default_server;
+    server_name  _;
 
     # ACME challenge directory served by Certbot webroot plugin
     location /.well-known/acme-challenge/ {
@@ -13,13 +13,9 @@ server {
         try_files  $uri =404;
     }
 
-    # Internal health probe — available over HTTP so load balancers / orchestrators
-    # can check readiness before TLS is fully configured.
-    location = /healthz {
-        access_log  off;
-        add_header  Content-Type  application/json;
-        return 200  '{"status":"ok","service":"uye-edge"}';
-    }
+    # Health probe and stub_status are available over HTTP so load balancers,
+    # the container HEALTHCHECK and nginx-exporter work without TLS.
+    include /etc/nginx/snippets/health.conf;
 
     # Redirect everything else to HTTPS
     location / {

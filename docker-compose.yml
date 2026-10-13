@@ -46,6 +46,7 @@ services:
       - /var/cache/nginx:uid=101,gid=101   # proxy/client-body temp files (nginx uid)
       - /var/run:uid=101,gid=101           # nginx.pid
       - /tmp:uid=101,gid=101              # general scratch space
+      - /etc/nginx/generated              # envsubst output (root-owned: entrypoint runs as root without DAC_OVERRIDE)
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/healthz"]
       interval: 30s

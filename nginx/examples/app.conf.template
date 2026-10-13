@@ -1,0 +1,45 @@
+# ---- Site: <app> -------------------------------------------------------------
+# Template for a new application site. To use:
+#   1. Copy to nginx/templates/sites/<app>.conf.template
+#   2. Replace <app> / <APP> with the application name (lowercase in nginx
+#      names, uppercase in env vars) — every upstream and zone name MUST be
+#      prefixed with <app>_ to avoid collisions with other sites.
+#   3. Add the APP_<APP>_* variables to .env.example and .env.dev.
+# This file lives outside templates/ and is not copied into the image.
+
+# Upstream and zones are http-context directives; this file is included at
+# http level, so they can be declared next to the server block.
+upstream <app>_backend {
+    server ${APP_<APP>_UPSTREAM_HOST}:${APP_<APP>_UPSTREAM_PORT} max_fails=3 fail_timeout=30s;
+
+    # Upstream keepalive — requires proxy_http_version 1.1 (proxy-params.conf)
+    keepalive          16;
+    keepalive_requests 1000;
+    keepalive_timeout  60s;
+}
+
+limit_req_zone $binary_remote_addr zone=<app>_api:10m rate=${APP_<APP>_RATE_LIMIT_RATE};
+
+server {
+    include /etc/nginx/snippets/tls.conf;
+    server_name   ${APP_<APP>_DOMAIN};
+
+    ssl_certificate      ${APP_<APP>_SSL_CERT_PATH};
+    ssl_certificate_key  ${APP_<APP>_SSL_KEY_PATH};
+    ssl_trusted_certificate ${APP_<APP>_SSL_CHAIN_PATH};
+
+    include /etc/nginx/snippets/security-headers.conf;
+    include /etc/nginx/snippets/guard-rails.conf;
+    include /etc/nginx/snippets/health.conf;
+
+    location / {
+        limit_req   zone=<app>_api  burst=${APP_<APP>_RATE_LIMIT_BURST}  nodelay;
+        limit_conn  conn_per_ip  ${NGINX_CONN_LIMIT_PER_IP};
+
+        # Do NOT add proxy_set_header here — it drops the http-level headers
+        # from proxy-params.conf (see CLAUDE.md).
+        proxy_pass  http://<app>_backend;
+    }
+
+    include /etc/nginx/snippets/error-pages.conf;
+}
