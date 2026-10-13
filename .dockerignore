@@ -8,3 +8,7 @@ docker-compose*.yml
 Makefile
 local/
 scripts/
+tests/
+.pre-commit-config.yaml
+.yamllint.yml
+.hadolint.yaml

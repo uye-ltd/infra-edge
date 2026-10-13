@@ -1,0 +1,62 @@
+# pre-commit hooks — install once with `make hooks`.
+# Fast checks run on commit; the Docker-based nginx -t + gixy run on push.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-yaml
+        args: [--unsafe]   # compose uses custom tags (!override, !reset)
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: detect-private-key
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.15.1
+    hooks:
+      - id: hadolint
+        files: (^|/)(Dockerfile|.*\.Dockerfile)$
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        args: [--strict]
+
+  - repo: https://github.com/wemake-services/dotenv-linter
+    rev: 0.9.0
+    hooks:
+      - id: dotenv-linter
+        files: ^\.env\.example$
+
+  - repo: local
+    hooks:
+      - id: check-env-vars
+        name: env vars in sync with .env.example
+        entry: tests/config/check-env-vars.sh
+        language: script
+        pass_filenames: false
+        files: ^(\.env\.example|nginx/templates/.*|docker-compose.*\.yml)$
+
+      - id: compose-config
+        name: docker compose config
+        entry: tests/config/compose-config.sh
+        language: script
+        pass_filenames: false
+        files: ^(\.env\.example|docker-compose.*\.yml)$
+
+      - id: nginx-t
+        name: nginx -t + gixy (Docker)
+        entry: tests/config/nginx-t.sh
+        language: script
+        pass_filenames: false
+        files: ^(Dockerfile|\.env\.example|nginx/.*|local/sites/.*|scripts/init-local-env\.sh|tests/config/.*)$
+        stages: [pre-push]

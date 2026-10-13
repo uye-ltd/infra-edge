@@ -4,7 +4,7 @@ ENV_FILE ?= .env.local
 COMPOSE  := docker compose --env-file $(ENV_FILE) -f docker-compose.yml -f docker-compose.local.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help init env certs certs-force up up-monitoring down restart reload nginx-t logs ps
+.PHONY: help init env certs certs-force up up-monitoring down restart reload nginx-t logs ps hooks lint test-config
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -47,3 +47,16 @@ logs: $(ENV_FILE) ## Follow logs of all services
 
 ps: $(ENV_FILE) ## Show service status
 	$(COMPOSE) ps
+
+# ---- Checks ------------------------------------------------------------------
+
+hooks: ## Install git hooks (pre-commit on commit, nginx -t + gixy on push)
+	pre-commit install --hook-type pre-commit --hook-type pre-push
+
+lint: ## Run all pre-commit linters on the whole repo
+	pre-commit run --all-files
+
+test-config: ## Env var sync, compose config, nginx -t + gixy for prod and local env
+	tests/config/check-env-vars.sh
+	tests/config/compose-config.sh
+	tests/config/nginx-t.sh

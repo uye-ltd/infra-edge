@@ -1,0 +1,4 @@
+ignored:
+  # Pinning apk package versions breaks the build whenever Alpine ships a
+  # patch release; the base image tag (nginx:1.27-alpine) is the pin.
+  - DL3018

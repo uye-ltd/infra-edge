@@ -108,6 +108,16 @@ Other targets: `make reload` (static config), `make restart` (templates), `make 
 
 ---
 
+## Checks
+
+```bash
+make hooks         # one-time: git hooks (lint on commit, nginx -t + gixy on push)
+make lint          # shellcheck, hadolint, yamllint, dotenv-linter, env/compose checks
+make test-config   # nginx -t + gixy for production and local env (Docker only)
+```
+
+---
+
 ## Production setup
 
 ### 1. Configure environment
@@ -221,6 +231,6 @@ Replace docker-compose with Helm. Use envsubst or Helm values to populate the sa
 - HSTS is set with a 2-year max-age and `preload` to prevent downgrade attacks.
 - Empty `User-Agent` and known scanner signatures (`sqlmap`, `nikto`, `nmap`, `masscan`, `zgrab`) return `403`.
 - `TRACE` and `TRACK` methods return `405`.
-- Access to `.git`, `.env`, `.htaccess`, `.htpasswd` paths returns `404`.
+- Any path segment starting with `.git`, `.env`, `.htaccess`, `.htpasswd`, `.DS_Store` (e.g. `/.git/config`, `/.env.local`) returns `404`.
 - `client_max_body_size` is capped at `10m` in `nginx.conf`. Adjust if your API handles large file uploads.
 - To add IP blocklists, uncomment and populate the `geo $blocked_ip` block in `nginx/conf.d/security.conf` and add `if ($blocked_ip) { return 403; }` to the HTTPS server template.
