@@ -129,6 +129,10 @@ At container startup, **before nginx launches**, this script:
   is not writable, the entrypoint silently skips rendering and nginx fails on the missing
   includes. In compose, `/etc/nginx/generated` is a root-owned tmpfs (the entrypoint runs
   as root without `CAP_DAC_OVERRIDE`, so it cannot write into a uid-101-owned tmpfs).
+- The same rule applies to every writable tmpfs the nginx master touches
+  (`/var/cache/nginx`, `/var/run`): they must be root-owned, NOT `uid=101`. The
+  master creates the `*_temp` subdirs itself and chowns them to the worker user
+  via `CAP_CHOWN`; workers still run as `nginx`.
 - Templates are rendered only at container start. `nginx -s reload` picks up edits to
   static files (`conf.d/`, `snippets/`, `nginx.conf`) but NOT template edits — restart
   the container for those.
@@ -329,12 +333,14 @@ over the internal `edge` Docker network (served by the :80 default server).
 | `certbot` | `nginx` + `certbot` | Initial cert issuance; cert renewal via `certbot-renew.sh` |
 | `observability` | `nginx` + `nginx-exporter` | When Prometheus scraping is needed |
 
-**Important:** `docker-compose.yml` has `depends_on: go-gateway` for nginx, but
-`go-gateway` is under the `stub` profile. This means starting nginx without the
-`stub` profile will log a warning about the missing service but will not fail.
-In production, the real Go Gateway runs in a separate stack and joins the `edge`
-network externally, or the `go-gateway` service is overridden in a
-deployment-specific compose file.
+**Important:** nginx declares `depends_on: go-gateway` with `required: false`,
+because `go-gateway` exists only under the `stub` profile. Without `required: false`
+compose refuses to start (`depends on undefined service "go-gateway"`).
+Compose will start nginx without the stub, but nginx itself still resolves
+`NGINX_UPSTREAM_HOST` at startup and exits with `host not found in upstream`
+if it is not reachable. In production, the real Go Gateway runs in a separate
+stack and joins the `edge` network externally, or the `go-gateway` service is
+overridden in a deployment-specific compose file.
 
 ---
 
@@ -362,8 +368,11 @@ docker exec uye-edge nginx -t
 
 Dev compose overrides (`docker-compose.dev.yml`):
 - Bind-mounts `nginx/nginx.conf`, `nginx/conf.d/`, `nginx/snippets/`, `nginx/templates/` so config edits take effect without rebuilding the image (`nginx -s reload` for static files, container restart for templates).
-- Uses `.env.dev` instead of `.env` (10× relaxed rate limits, `localhost` domain).
-- Activates `go-gateway` and `nginx-exporter` without requiring profile flags.
+- Uses `.env.dev` instead of `.env` (10× relaxed rate limits, `localhost` domain) via
+  `env_file: !override` — a plain list would be merged with the base `.env`.
+- Activates `go-gateway` and `nginx-exporter` without requiring profile flags via
+  `profiles: !reset []` — a plain `profiles: []` does not clear the base profile.
+- The `!override` / `!reset` tags require Docker Compose >= 2.24.
 - Mounts `./certs/dev` as `/etc/nginx/ssl` (read-only) for the self-signed cert.
 
 ---

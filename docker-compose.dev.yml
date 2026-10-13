@@ -8,6 +8,9 @@
 #   - Stub Go Gateway using nginx:alpine echoing a JSON response
 #   - All profiles active by default (no certbot)
 #   - nginx-exporter always enabled
+#
+# Requires Docker Compose >= 2.24 for the !override / !reset merge tags:
+# plain lists (env_file, profiles) are merged with the base file, not replaced.
 
 services:
 
@@ -20,7 +23,8 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/snippets:/etc/nginx/snippets:ro
       - ./nginx/templates:/etc/nginx/templates:ro
-    env_file: .env.dev
+    env_file: !override
+      - .env.dev
 
   go-gateway:
     image: nginx:alpine
@@ -29,7 +33,7 @@ services:
       - ./dev/go-gateway-stub.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - edge
-    profiles: []   # always active in dev
+    profiles: !reset []   # always active in dev
 
   nginx-exporter:
-    profiles: []   # always active in dev
+    profiles: !reset []   # always active in dev
