@@ -18,8 +18,9 @@ services:
       - certbot_certs:/etc/nginx/ssl:ro
       # Certbot webroot for ACME challenge files
       - certbot_webroot:/var/www/certbot:ro
-      # Persist access and error logs
-      - nginx_logs:/var/log/nginx
+    # Logs: no volume. The base image symlinks /var/log/nginx/{access,error}.log
+    # to stdout/stderr, so logs go to the Docker logging driver
+    # (`docker logs uye-edge`); ship them from there (Loki, ELK, ...).
     env_file: .env
     networks:
       - edge
@@ -122,7 +123,6 @@ services:
 volumes:
   certbot_certs:
   certbot_webroot:
-  nginx_logs:
 
 # ---------------------------------------------------------------------------
 # Networks

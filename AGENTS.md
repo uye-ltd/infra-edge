@@ -235,6 +235,13 @@ If you set it to `least_conn` without the semicolon, nginx config validation wil
 
 ## conf.d/logging.conf — nuances
 
+- Log paths are symlinks in the base image (`access.log` → `/dev/stdout`,
+  `error.log` → `/dev/stderr`), so all logs go to the Docker logging driver.
+  There is deliberately **no** log volume — a volume over `/var/log/nginx` would
+  only persist the symlinks. Collect logs from the container (`docker logs`,
+  Loki/Alloy `loki.source.docker`, a Docker logging driver). If file logs are ever
+  needed, point `access_log` at a real file AND add log rotation.
+
 - Uses `log_format json_combined escape=json` — the `escape=json` flag properly escapes special characters (quotes, backslashes, control chars) in variable values. Without it, user-supplied input in `$http_user_agent` or `$args` can break JSON structure.
 - `buffer=32k flush=5s` on `access_log` — log lines are buffered in memory and flushed every 5 seconds. This reduces I/O at high RPS but means up to 5 seconds of logs can be lost on hard crash. Acceptable for an edge gateway.
 - `$upstream_response_time` will contain `-` for requests served directly by nginx (e.g. `/healthz`, `/nginx-status`). This is normal and must be handled in any log processing pipeline.

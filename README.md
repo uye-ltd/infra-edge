@@ -202,7 +202,7 @@ requests by status/host, request and upstream latency percentiles, live access l
 Configs: `local/observability/`.
 
 ### Access logs
-Logs are written in JSON to `/var/log/nginx/access.log` (buffered, flushed every 5 s). Each line includes:
+Logs are written in JSON to the container's stdout (`/var/log/nginx/access.log` is a symlink to `/dev/stdout`; buffered, flushed every 5 s) — read them with `docker logs uye-edge` or a log shipper. Each line includes:
 - `request_id` — unique per-request ID, also propagated as `X-Request-ID` header
 - `upstream_response_time` — latency contribution from the Go Gateway
 - `status`, `request_time`, `remote_addr`, TLS details, and more
