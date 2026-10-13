@@ -104,6 +104,8 @@ uye-edge/
 ├── local/                      # Local-only assets, never copied into the image
 │   ├── go-gateway-stub.conf    # nginx config for the stub Go Gateway container
 │   ├── demo-stub.conf          # nginx config for the demo site's stub upstream
+│   ├── observability/          # 'monitoring' profile: prometheus.yml, loki.yml,
+│   │                           #   config.alloy, grafana/{provisioning,dashboards}
 │   └── sites/
 │       └── demo.conf           # Static second site on demo.localhost → /etc/nginx/local-sites/
 ├── certbot/                    # Placeholder dir — actual data lives in Docker volumes
@@ -476,6 +478,32 @@ read-only at `/etc/nginx/ssl`.
 ---
 
 ## Prometheus / observability
+
+### Local monitoring stack
+
+`make up-monitoring` starts the `monitoring` profile from `docker-compose.local.yml`:
+
+| Service | URL | Role |
+|---|---|---|
+| `prometheus` | http://localhost:9090 | scrapes `nginx-exporter:9113` |
+| `loki` | internal `:3100` | stores access-log lines |
+| `alloy` | — | reads `uye-edge` container stdout via the Docker socket → Loki |
+| `grafana` | http://localhost:3000 | anonymous admin; home dashboard "uye-edge (local)" |
+
+- The nginx image symlinks `/var/log/nginx/access.log` → stdout, so Alloy collects
+  logs through the Docker API (`loki.source.docker`), not from files.
+- Alloy promotes `status`, `method`, `host` (from `http_host`) to Loki labels; every
+  other field is read with `| json` in LogQL. Keep labels low-cardinality — never
+  promote `uri`, `request_id`, `remote_addr`.
+- Dashboard JSON lives in `local/observability/grafana/dashboards/edge.json` and is
+  provisioned read-from-file; UI edits are allowed but must be exported back into the
+  file to persist. Metrics from stub_status are global (no per-host split); per-host
+  and latency panels come from Loki.
+- Image versions are pinned; data lives in `prometheus_data`, `loki_data`,
+  `grafana_data` volumes (`make down` keeps them; `docker volume rm` to reset).
+- This stack is local-only. Production observability is out of scope for this repo.
+
+### Production exporter
 
 ```
 nginx-exporter  →  GET http://nginx/nginx-status  →  parses stub_status

@@ -61,6 +61,7 @@ uye-edge/
 ├── local/
 │   ├── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway locally
 │   ├── demo-stub.conf          # upstream stub for the demo site
+│   ├── observability/          # local Prometheus / Loki / Alloy / Grafana configs
 │   └── sites/demo.conf         # local-only second site on demo.localhost
 └── certbot/                    # Certbot data (mounted as a Docker volume)
 ```
@@ -173,6 +174,14 @@ Key metrics exposed:
 - `nginx_connections_active`
 - `nginx_http_requests_total`
 - `nginx_connections_accepted_total`
+
+### Local monitoring
+```bash
+make up-monitoring   # + Prometheus (:9090), Loki, Alloy, Grafana (:3000)
+```
+Grafana opens without login on the "uye-edge (local)" dashboard: connections,
+requests by status/host, request and upstream latency percentiles, live access log.
+Configs: `local/observability/`.
 
 ### Access logs
 Logs are written in JSON to `/var/log/nginx/access.log` (buffered, flushed every 5 s). Each line includes:

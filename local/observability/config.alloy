@@ -1,0 +1,58 @@
+// Local Grafana Alloy — ships the nginx JSON access log to Loki.
+//
+// The official nginx image symlinks /var/log/nginx/access.log to stdout, so
+// logs are read from the Docker API (container stdout/stderr), not from files.
+
+discovery.docker "edge" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "name"
+    values = ["^uye-edge$"]
+  }
+}
+
+discovery.relabel "edge" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "edge" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.edge.targets
+  relabel_rules = discovery.relabel.edge.rules
+  forward_to    = [loki.process.edge.receiver]
+}
+
+// Promote low-cardinality fields to labels; everything else stays in the
+// JSON line and is queried with `| json` in LogQL.
+loki.process "edge" {
+  stage.json {
+    expressions = {
+      status = "status",
+      method = "method",
+      host   = "http_host",
+    }
+  }
+
+  stage.labels {
+    values = {
+      status = "",
+      method = "",
+      host   = "",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

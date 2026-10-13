@@ -4,7 +4,7 @@ ENV_FILE ?= .env.local
 COMPOSE  := docker compose --env-file $(ENV_FILE) -f docker-compose.yml -f docker-compose.local.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help init env certs certs-force up down restart reload nginx-t logs ps
+.PHONY: help init env certs certs-force up up-monitoring down restart reload nginx-t logs ps
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -26,8 +26,11 @@ $(ENV_FILE):
 up: $(ENV_FILE) ## Build and start the local stack in the background
 	$(COMPOSE) up -d --build
 
-down: $(ENV_FILE) ## Stop the local stack
-	$(COMPOSE) down
+up-monitoring: $(ENV_FILE) ## Start the stack plus Prometheus/Loki/Alloy/Grafana (http://localhost:3000)
+	$(COMPOSE) --profile monitoring up -d --build
+
+down: $(ENV_FILE) ## Stop the local stack (including monitoring)
+	$(COMPOSE) --profile monitoring down
 
 restart: $(ENV_FILE) ## Restart nginx (re-renders templates)
 	$(COMPOSE) restart nginx

@@ -8,6 +8,8 @@
 #     mkcert if installed, otherwise self-signed openssl)
 #   - Stub Go Gateway using nginx:alpine echoing a JSON response
 #   - Local-only demo site on https://demo.localhost (local/sites/) + demo-stub
+#   - Optional 'monitoring' profile: Prometheus, Loki, Alloy, Grafana
+#     (`make up-monitoring`; configs in local/observability/)
 #   - All profiles active by default (no certbot)
 #   - nginx-exporter always enabled
 #
@@ -56,3 +58,72 @@ services:
 
   nginx-exporter:
     profiles: !reset []   # always active locally
+
+  # ---------------------------------------------------------------------------
+  # Local monitoring stack (profile: monitoring) — `make up-monitoring`
+  #   Grafana    http://localhost:3000  (anonymous admin, dashboard "uye-edge (local)")
+  #   Prometheus http://localhost:9090
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: uye-prometheus-local
+    volumes:
+      - ./local/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - edge
+    profiles: [monitoring]
+
+  loki:
+    image: grafana/loki:3.5.3
+    container_name: uye-loki-local
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./local/observability/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    networks:
+      - edge
+    profiles: [monitoring]
+
+  # Ships nginx container stdout (JSON access log) to Loki via the Docker API.
+  alloy:
+    image: grafana/alloy:v1.10.0
+    container_name: uye-alloy-local
+    command: run /etc/alloy/config.alloy --storage.path=/var/lib/alloy/data
+    volumes:
+      - ./local/observability/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - edge
+    depends_on:
+      - loki
+    profiles: [monitoring]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: uye-grafana-local
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/edge.json
+    volumes:
+      - ./local/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./local/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - edge
+    depends_on:
+      - prometheus
+      - loki
+    profiles: [monitoring]
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
