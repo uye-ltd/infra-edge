@@ -21,7 +21,9 @@ Read it fully before making any changes.
   - write the full message to `.git/COMMIT_<n>.txt` (inside `.git/`, so it is
     never tracked) and give one short single-line command per step, e.g.
     `git add <files>` and `git commit -F .git/COMMIT_1.txt`;
-  - also show the message text in the reply so the user can review it.
+  - also show the message text in the reply so the user can review it;
+  - `git commit -F` does not delete the file, so finish with a separate
+    single-line cleanup command: `rm .git/COMMIT_*.txt`.
 
 ---
 
