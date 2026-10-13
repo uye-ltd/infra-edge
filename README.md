@@ -1,3 +1,4 @@
+
 # uye-edge
 
 NGINX-based edge API gateway for the UYE platform. Handles TLS termination, reverse proxying, rate limiting, compression, and observability at the network boundary before traffic reaches the internal Go Gateway.
@@ -42,11 +43,16 @@ uye-edge/
 │   │   ├── security.conf       # UA filtering, method blocking, maps
 │   │   ├── ssl-params.conf     # TLS protocols, ciphers, OCSP stapling
 │   │   └── proxy-params.conf   # Upstream headers, buffering, timeouts
-│   └── templates/              # envsubst templates → /etc/nginx/conf.d/ at startup
-│       ├── rate-limit.conf.template
-│       ├── upstream.conf.template
-│       ├── http-server.conf.template
-│       └── https-server.conf.template
+│   ├── snippets/               # Shared server/location includes (headers, guard rails, health, errors, TLS)
+│   ├── templates/              # envsubst templates → /etc/nginx/generated/ at startup
+│   │   ├── rate-limit.conf.template
+│   │   ├── upstream.conf.template
+│   │   ├── http-server.conf.template   # :80 default server (ACME, health, redirect)
+│   │   ├── https-server.conf.template  # :443 default server (unknown hosts → 444)
+│   │   └── sites/                      # One file per application served by the edge
+│   │       └── uye.conf.template
+│   └── examples/
+│       └── app.conf.template   # Starting point for a new application site
 ├── scripts/
 │   ├── generate-self-signed.sh # Dev: create self-signed cert
 │   ├── certbot-renew.sh        # Production: renew Let's Encrypt certs + reload
