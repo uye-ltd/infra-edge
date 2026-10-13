@@ -121,6 +121,9 @@ make smoke         # hurl smoke tests against the running local stack
 make test          # test-config + up + smoke
 ```
 
+CI (`.github/workflows/ci.yml`) runs the same `make lint`-equivalent pre-commit
+hooks, `make test-config` and `make init up smoke` on every PR and push to `main`.
+
 ---
 
 ## Production setup

@@ -1,0 +1,51 @@
+# CI — the same checks as `make lint`, `make test-config` and `make smoke`.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: pip install pre-commit==4.6.0
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-config
+
+  smoke:
+    runs-on: ubuntu-24.04
+    needs: config
+    steps:
+      - uses: actions/checkout@v4
+      # No mkcert on the runner: generate-local-certs.sh falls back to openssl.
+      - run: make init
+      - run: make up
+      - run: make smoke
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.local.yml logs --no-color
+      - name: Stop stack
+        if: always()
+        run: make down

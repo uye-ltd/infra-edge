@@ -37,6 +37,11 @@ repos:
       - id: dotenv-linter
         files: ^\.env\.example$
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
   - repo: local
     hooks:
       - id: check-env-vars

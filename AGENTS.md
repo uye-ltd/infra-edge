@@ -118,6 +118,7 @@ uye-edge/
 │       ├── Dockerfile          # hurl + curl runner image
 │       ├── run.sh              # runs *.hurl in name order + 444 checks with curl
 │       └── NN-*.hurl, zz-rate-limit.hurl
+├── .github/workflows/ci.yml    # CI: lint, config, smoke (same make targets as locally)
 ├── .pre-commit-config.yaml     # Linters + local checks (`make hooks`, `make lint`)
 ├── .yamllint.yml / .hadolint.yaml
 ├── certbot/                    # Placeholder dir — actual data lives in Docker volumes
@@ -467,6 +468,20 @@ without one; fix the config instead when the finding is real.
 or `.env.example` defines a variable used nowhere (templates or compose interpolation).
 
 The pre-push hook runs `nginx-t.sh` only when nginx/env/test files changed.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every PR and on push to `main`, using the same
+entry points as local development — keep it that way (CI logic goes into the
+Makefile/scripts, not into the workflow):
+
+| Job | Runs |
+|---|---|
+| `lint` | `pre-commit run --all-files` (commit-stage hooks, incl. actionlint) |
+| `config` | `make test-config` |
+| `smoke` | `make init` → `make up` → `make smoke`; compose logs on failure; `make down` |
+
+The runner has no mkcert, so `make init` produces the openssl self-signed cert.
 
 ### Smoke tests (hurl)
 
