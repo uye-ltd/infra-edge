@@ -4,7 +4,8 @@
 #   2. Replace <app> / <APP> with the application name (lowercase in nginx
 #      names, uppercase in env vars) — every upstream and zone name MUST be
 #      prefixed with <app>_ to avoid collisions with other sites.
-#   3. Add the APP_<APP>_* variables to .env.example and .env.dev.
+#   3. Add the APP_<APP>_* variables to .env.example (and, if the local value
+#      must differ, to the overrides in scripts/init-local-env.sh).
 # This file lives outside templates/ and is not copied into the image.
 
 # Upstream and zones are http-context directives; this file is included at

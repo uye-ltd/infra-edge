@@ -1,8 +1,10 @@
 .git
 .gitignore
+.idea
 *.md
 certs/
-.env
-.env.dev
-docker-compose.dev.yml
-scripts/generate-self-signed.sh
+.env*
+docker-compose*.yml
+Makefile
+local/
+scripts/

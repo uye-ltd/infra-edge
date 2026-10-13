@@ -32,9 +32,9 @@ Browser / Client
 uye-edge/
 ├── Dockerfile
 ├── docker-compose.yml          # Production compose
-├── docker-compose.dev.yml      # Dev overrides (self-signed cert + stub upstream)
-├── .env.example                # All supported environment variables
-├── .env.dev                    # Dev defaults (relaxed limits, self-signed TLS)
+├── docker-compose.local.yml    # Local overrides (local cert + stub upstream)
+├── Makefile                    # Local shortcuts (`make help`)
+├── .env.example                # All supported environment variables (the only tracked .env*)
 ├── nginx/
 │   ├── nginx.conf              # Main nginx config (static — tuned defaults)
 │   ├── conf.d/                 # Static modular configs (included at build time)
@@ -54,36 +54,43 @@ uye-edge/
 │   └── examples/
 │       └── app.conf.template   # Starting point for a new application site
 ├── scripts/
-│   ├── generate-self-signed.sh # Dev: create self-signed cert
+│   ├── init-local-env.sh       # Local: generate .env.local from .env.example
+│   ├── generate-self-signed.sh # Local: create self-signed cert in certs/local/
 │   ├── certbot-renew.sh        # Production: renew Let's Encrypt certs + reload
 │   └── healthcheck.sh          # Manual health probe
-├── dev/
-│   └── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway in dev
+├── local/
+│   └── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway locally
 └── certbot/                    # Certbot data (mounted as a Docker volume)
 ```
 
 ---
 
-## Quick start (development)
+## Quick start (local)
 
-### 1. Generate a self-signed certificate
+Environments: **local** = developer machine, **dev** = reserved for a future shared
+dev server, **production** = `docker-compose.yml` + `.env`.
+
+### 1. One-time setup
 ```bash
-bash scripts/generate-self-signed.sh
+make init   # .env.local (generated from .env.example) + certs/local/*
 ```
 
 ### 2. Start the stack
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+make up     # nginx + stub go-gateway + nginx-exporter
 ```
 
 ### 3. Verify
 ```bash
-curl -k https://localhost/healthz
+curl --cacert certs/local/ca.pem https://localhost/healthz
 # {"status":"ok","service":"uye-edge"}
 
-curl -k https://localhost/api/users
+curl --cacert certs/local/ca.pem https://localhost/api/users
 # {"service":"go-gateway-stub","path":"/api/users","message":"..."}
 ```
+
+Other targets: `make reload` (static config), `make restart` (templates), `make logs`,
+`make down`; see `make help`.
 
 ---
 
