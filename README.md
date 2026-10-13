@@ -63,6 +63,9 @@ uye-edge/
 │   ├── demo-stub.conf          # upstream stub for the demo site
 │   ├── observability/          # local Prometheus / Loki / Alloy / Grafana configs
 │   └── sites/demo.conf         # local-only second site on demo.localhost
+├── tests/
+│   ├── config/                 # env-var sync, compose config, nginx -t + gixy
+│   └── smoke/                  # hurl smoke tests (`make smoke`)
 └── certbot/                    # Certbot data (mounted as a Docker volume)
 ```
 
@@ -114,6 +117,8 @@ Other targets: `make reload` (static config), `make restart` (templates), `make 
 make hooks         # one-time: git hooks (lint on commit, nginx -t + gixy on push)
 make lint          # shellcheck, hadolint, yamllint, dotenv-linter, env/compose checks
 make test-config   # nginx -t + gixy for production and local env (Docker only)
+make smoke         # hurl smoke tests against the running local stack
+make test          # test-config + up + smoke
 ```
 
 ---

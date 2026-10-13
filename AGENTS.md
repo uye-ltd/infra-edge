@@ -109,11 +109,15 @@ uye-edge/
 │   └── sites/
 │       └── demo.conf           # Static second site on demo.localhost → /etc/nginx/local-sites/
 ├── tests/
-│   └── config/
-│       ├── check-env-vars.sh   # ${VAR} in templates ⇔ .env.example ⇔ compose interpolation
-│       ├── compose-config.sh   # docker compose config for prod and prod+local
-│       ├── nginx-t.sh          # render templates with each env, nginx -t, gixy
-│       └── gixy.Dockerfile     # pinned gixy-ng image used by nginx-t.sh
+│   ├── config/
+│   │   ├── check-env-vars.sh   # ${VAR} in templates ⇔ .env.example ⇔ compose interpolation
+│   │   ├── compose-config.sh   # docker compose config for prod and prod+local
+│   │   ├── nginx-t.sh          # render templates with each env, nginx -t, gixy
+│   │   └── gixy.Dockerfile     # pinned gixy-ng image used by nginx-t.sh
+│   └── smoke/                  # hurl tests against the running local stack (`make smoke`)
+│       ├── Dockerfile          # hurl + curl runner image
+│       ├── run.sh              # runs *.hurl in name order + 444 checks with curl
+│       └── NN-*.hurl, zz-rate-limit.hurl
 ├── .pre-commit-config.yaml     # Linters + local checks (`make hooks`, `make lint`)
 ├── .yamllint.yml / .hadolint.yaml
 ├── certbot/                    # Placeholder dir — actual data lives in Docker volumes
@@ -377,7 +381,7 @@ overridden in a deployment-specific compose file.
 # 1. One-time setup: .env.local (from .env.example) + certs/local/*
 make init
 
-# 2. Start the local stack (nginx + stub go-gateway + nginx-exporter)
+# 2. Start the local stack (nginx + stubs + nginx-exporter), wait until healthy
 make up
 
 # 3. Test
@@ -446,6 +450,8 @@ save by replacing the file are not seen by the running container — recreate it
 | `make hooks` | One-time: install pre-commit (on commit) and pre-push hooks |
 | `make lint` | `pre-commit run --all-files`: whitespace/EOF, JSON/YAML syntax, shellcheck, hadolint, yamllint, dotenv-linter, env-var sync, compose config |
 | `make test-config` | `check-env-vars.sh` + `compose-config.sh` + `nginx-t.sh` (Docker only, no running stack needed) |
+| `make smoke` | hurl smoke tests against the running local stack |
+| `make test` | `test-config` → `up` (waits for healthy) → `smoke` |
 
 `tests/config/nginx-t.sh` builds the image and, for `.env.example` (production shape)
 and a freshly generated local env, runs the image's envsubst step, `nginx -t`, then
@@ -461,6 +467,26 @@ without one; fix the config instead when the finding is real.
 or `.env.example` defines a variable used nowhere (templates or compose interpolation).
 
 The pre-push hook runs `nginx-t.sh` only when nginx/env/test files changed.
+
+### Smoke tests (hurl)
+
+`make smoke` runs the `smoke` service (`docker-compose.local.yml`, profile `test`)
+on the `edge` network: `tests/smoke/run.sh` routes every local hostname to the
+`nginx` service with `--connect-to` and trusts `certs/local/ca.pem`, so TLS/SNI
+behave as from a browser. Coverage: health on :80/:443, 80→443 redirect, ACME
+webroot, stub_status, security headers per site, routing per site and X-Request-ID
+propagation, method/UA/sensitive-path guard rails, JSON 429 with `Retry-After`,
+and — with curl, since hurl cannot assert "no response" — 444 for unknown Host/SNI.
+
+- Files run sequentially in name order (`--jobs 1`); `zz-rate-limit.hurl` must stay
+  last, it exhausts the `/api/auth/` bucket of the runner's IP for ~30 s.
+- The stubs echo `host`, `path` and `request_id`; assertions rely on these fields.
+- Stub configs are single-file bind mounts: after editing one, recreate the stub
+  container (see "Local-only sites"), otherwise tests see the old response.
+- **Every new site or route gets hurl tests** (at least: routing to its upstream,
+  security headers, a guard-rail check). A local site for testing goes to
+  `local/sites/` and its hostname to `HOSTS` in `generate-local-certs.sh` and to
+  `--connect-to` in `run.sh`.
 
 ---
 
@@ -581,7 +607,8 @@ The application team opens a PR against this repo; the edge owner reviews it.
    variable renders as an empty string and fails `nginx -t` for **all** sites.
 5. Issue a certificate for the new domain (certbot `certonly --webroot -d <domain>`;
    the :80 default server already serves the ACME webroot for any host).
-6. Rebuild the image (or `make restart` locally) and run `nginx -t`.
+6. Rebuild the image (or `make restart` locally) and run `make test-config`.
+   Add hurl smoke tests for the site in `tests/smoke/` (see "Smoke tests").
 7. Recommended: a `CODEOWNERS` entry `nginx/templates/sites/<app>.conf.template @<app-team> @<edge-owner>`.
 
 If all applications sit behind `uye-gate`, per-app routing belongs in `uye-gate`; the

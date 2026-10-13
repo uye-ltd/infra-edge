@@ -59,6 +59,18 @@ services:
   nginx-exporter:
     profiles: !reset []   # always active locally
 
+  # Smoke-test runner (profile: test) — `make smoke`; see tests/smoke/run.sh
+  smoke:
+    build: tests/smoke
+    image: uye-edge-smoke:local
+    volumes:
+      - ./tests/smoke:/tests:ro
+      - ./certs/local:/certs:ro
+    entrypoint: ["/tests/run.sh"]
+    networks:
+      - edge
+    profiles: [test]
+
   # ---------------------------------------------------------------------------
   # Local monitoring stack (profile: monitoring) — `make up-monitoring`
   #   Grafana    http://localhost:3000  (anonymous admin, dashboard "uye-edge (local)")

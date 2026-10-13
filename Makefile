@@ -4,7 +4,7 @@ ENV_FILE ?= .env.local
 COMPOSE  := docker compose --env-file $(ENV_FILE) -f docker-compose.yml -f docker-compose.local.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help init env certs certs-force up up-monitoring down restart reload nginx-t logs ps hooks lint test-config
+.PHONY: help init env certs certs-force up up-monitoring down restart reload nginx-t logs ps hooks lint test-config smoke test
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -23,8 +23,8 @@ certs-force: ## Regenerate local TLS certs (e.g. after installing mkcert or addi
 $(ENV_FILE):
 	@echo "$(ENV_FILE) is missing — run 'make init' first." >&2; exit 1
 
-up: $(ENV_FILE) ## Build and start the local stack in the background
-	$(COMPOSE) up -d --build
+up: $(ENV_FILE) ## Build and start the local stack, wait until healthy
+	$(COMPOSE) up -d --build --wait
 
 up-monitoring: $(ENV_FILE) ## Start the stack plus Prometheus/Loki/Alloy/Grafana (http://localhost:3000)
 	$(COMPOSE) --profile monitoring up -d --build
@@ -60,3 +60,8 @@ test-config: ## Env var sync, compose config, nginx -t + gixy for prod and local
 	tests/config/check-env-vars.sh
 	tests/config/compose-config.sh
 	tests/config/nginx-t.sh
+
+smoke: $(ENV_FILE) ## hurl smoke tests against the running local stack (tests/smoke)
+	$(COMPOSE) --profile test run --rm --build smoke
+
+test: test-config up smoke ## Everything: config checks, start the stack, smoke tests
