@@ -100,14 +100,11 @@ jobs:
           echo "digest=$(cat /tmp/digest.txt)" >> "$GITHUB_OUTPUT"
 
       # Sign by digest: tags are mutable.
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003  # v4.1.1
-        with:
-          cosign-release: 'v2.6.5'
       - name: Sign image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          cosign sign --yes \
+          cosign sign --yes --new-bundle-format=false --use-signing-config=false \
             "${IMAGE}@${DIGEST}"
 
   promote:
