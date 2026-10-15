@@ -33,8 +33,8 @@ uye-edge/
 ├── docker-compose.yml          # Production compose
 ├── docker-compose.production.yml # Production host-network overlay
 ├── docker-compose.local.yml    # Local overrides (local build, local cert, stub upstream)
-├── docker-compose.infra-runner.yml # Overlay for the infra-runner deployer (plugin mounts)
-├── .infra-runner.plugin        # infra-runner deployer plugin descriptor
+├── docker-compose.infra-runner.yml # Retired inert overlay
+├── .infra-runner.plugin        # Retired inert descriptor
 ├── Makefile                    # Local shortcuts (`make help`)
 ├── .env.example                # All supported environment variables (the only tracked .env*)
 ├── nginx/
@@ -59,7 +59,7 @@ uye-edge/
 │   ├── init-local-env.sh       # Local: generate .env.local from .env.example
 │   ├── generate-local-certs.sh # Local: certs/local/ via mkcert (fallback: openssl)
 │   ├── certbot-renew.sh        # Production: renew Let's Encrypt certs + reload
-│   ├── wait-healthy.sh         # Production: deployer post-deploy hook (wait for healthy)
+│   ├── wait-healthy.sh         # Legacy health helper; executor now checks Docker health
 │   └── healthcheck.sh          # Manual health probe
 ├── local/
 │   ├── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway locally
@@ -129,82 +129,22 @@ hooks, `make test-config` and `make init up smoke` on every PR and push to `main
 
 ---
 
-## Production deploy (infra-runner)
+## Production release
 
-The image is built, pushed to `ghcr.io/uye-ltd/infra-edge` and cosign-signed by the
-`publish` job in `.github/workflows/ci.yml` on every push to `main` (after lint, config
-and smoke pass), on the self-hosted [infra-runner](https://github.com/uye-ltd/infra-runner).
-The infra-runner **deployer** treats this repo as a plugin (`.infra-runner.plugin`): each
-poll cycle it pulls `infra-edge:latest`, verifies the signature against the `ci.yml`
-identity, runs `docker compose up -d --no-deps nginx` and then `scripts/wait-healthy.sh`.
-No SSH, no deploy job.
+CI runs lint, configuration and smoke checks, builds a SHA-tagged image with an OCI revision label, signs its digest and only then promotes the same digest to `latest`. The GHCR package must be public. CI has no SSH or server deployment credential.
 
-The GHCR package must be **public**: on the GitHub App path the deployer pulls
-anonymously. After the first `publish` run, set the package visibility to Public.
-The deployer verifies the signature before it pulls or starts the image.
+`infra-ansible/roles/uye_deploy` installs the host executor, root-owned Compose manifest and environment snapshot. The executor independently verifies protected `main`, SHA/latest digest agreement, exact cosign identity and image revision before `docker compose up` for the fixed `infra-edge/nginx` target. It checks NGINX health and restores the previous signed digest on a post-update health failure. The infra-runner poller only reports signatures and cannot use Docker API. Changes to the trusted Compose spec or environment require Ansible; no shell hook or plugin from the server checkout is executed.
 
-### Caddy migration
-
-Production uses `docker-compose.production.yml` and host networking. This is
-needed because Vault and Portainer listen on the host's `127.0.0.1`; it also
-preserves the VPN client's source address for access control. Caddy currently
-owns ports 80/443, so do not start production nginx alongside it.
+Production NGINX uses the host network because Vault and Portainer listen on host-local ports. Its existing `infra-edge_certbot_certs` volume is preserved. Certificate renewal remains the fixed Certbot operation in `scripts/certbot-renew.sh`. The retired `docker-compose.infra-runner.yml` and `.infra-runner.plugin` files are inert; do not add them to the runner `COMPOSE_FILE`.
 
 | Hostname | Backend | Access |
 |---|---|---|
 | `navidrome.uye.rocks` | `127.0.0.1:4533` | public |
-| `filebrowser.uye.rocks` | `127.0.0.1:3001` | `10.0.0.0/24` only |
-| `vault.uye.rocks` | `127.0.0.1:8200` | `10.0.0.0/24` only |
-| `portainer.uye.rocks` | `127.0.0.1:9000` | `10.0.0.0/24` only |
+| `filebrowser.uye.rocks` | `127.0.0.1:3001` | VPN only |
+| `vault.uye.rocks` | `127.0.0.1:8200` | VPN only |
+| `portainer.uye.rocks` | `127.0.0.1:9000` | VPN only |
 
-`navidromed.uye.rocks` is intentionally retired. The UYE application site is
-local-only until the real Go Gateway exists. Production certificates use DNS-01
-via Cloudflare, so the four-domain certificate can be issued while Caddy is live.
-The Cloudflare credentials file lives outside this checkout and is mounted only
-into Certbot, not NGINX or the deployer.
-
-The companion `infra-ansible` repo supplies three explicit playbooks. After
-publishing this repo and making the GHCR package public:
-
-```bash
-ansible-playbook -i inventory/hosts.yml playbooks/edge-prepare.yml
-ansible-playbook -i inventory/hosts.yml playbooks/edge-cutover.yml
-```
-
-`edge-prepare.yml` clones the repo, writes `.env` and the restricted Cloudflare
-credential, validates Compose, obtains the certificate, and schedules checkout
-updates and renewal. It does not stop Caddy or register the plugin. The cutover
-playbook stops Caddy, appends the edge overlay to the runner's existing
-`COMPOSE_FILE`, and waits for the signed image to start via deployer. On failure
-it restores Caddy. To reverse a successful cutover:
-
-```bash
-ansible-playbook -i inventory/hosts.yml playbooks/edge-rollback.yml
-```
-
-Never run `docker compose pull nginx` as a bootstrap step: that would bypass
-deployer signature verification.
-
-The server `.env` uses absolute `/workspace-edge` paths in `COMPOSE_FILE` for
-Compose inside the deployer. Host-side Compose commands must pass both files
-explicitly (`-f docker-compose.yml -f docker-compose.production.yml`); the
-Ansible playbooks and `scripts/certbot-renew.sh` do this. The `.env` is owned by
-`ghrunner:root` with mode `0640` so the capability-restricted deployer can read it.
-
-### What deploys automatically
-
-| Change | How it reaches the server |
-|---|---|
-| `nginx/**`, `Dockerfile` (everything inside the image) | automatically: new signed image → deployer recreates nginx |
-| Compose files, `.infra-runner.plugin`, `scripts/wait-healthy.sh` | after the `git pull` cron; compose changes apply with the next image update or a deliberate service recreation |
-| server `.env` | manual Compose with both production `-f` files |
-
-A failed signature check, `compose up` or health wait marks the deployer's
-`GET :8080/health` as `503`; there is no automatic rollback. Deployer logs:
-`docker compose -f ~/infra-runner/docker-compose.yml logs -f --no-log-prefix deployer | jq .`
-
-The `uye-edge` bridge network remains for local development. Production nginx
-uses the host network and proxies to the four host-local services above.
+The server has already passed its Caddy-to-NGINX migration. The new deployer isolation cutover is performed only through `infra-ansible/playbooks/deployer-prepare.yml` and `playbooks/deployer-cutover.yml` after signed releases are published. A bad signature or unavailable registry leaves the running container unchanged. Executor status is authoritative; poller `/health` is observational.
 
 ---
 

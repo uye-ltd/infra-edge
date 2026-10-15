@@ -542,80 +542,11 @@ and — with curl, since hurl cannot assert "no response" — 444 for unknown Ho
 
 ## Production workflow
 
-Production runs on the infra-runner host, checkout `/home/ghrunner/infra-edge`, deployed
-by the infra-runner **deployer** as a plugin (see infra-runner `deployer/PLUGINS.md`).
-Step-by-step server setup is in README → "Production deploy (infra-runner)".
+Release authority lives in `infra-ansible/roles/uye_deploy`, not in an infra-runner plugin. CI validates lint/config/smoke, builds a SHA-tagged image with an OCI revision label, signs the digest and promotes the same digest to `latest` after checks pass. The host executor checks protected `main`, fast-forward history, tag agreement, signature identity and revision, then updates only `infra-edge/nginx` with a root-owned Compose manifest. It waits for health and restores the previous signed digest on post-update health failure. The poller has no Docker API or checkout mounts.
 
-### How a deploy happens
+The old `docker-compose.infra-runner.yml`, `deploy/docker-compose.infra-runner.yml` and `*.plugin` descriptors are inert. Do not restore plugin mounts, `COMPOSE_FILE` overlays or checkout hooks. Changes to production Compose, environment and certificates are applied by Ansible, not by changing the server checkout. The public GHCR package is required for anonymous verification and pull.
 
-```
-push to main → ci.yml: lint, config, smoke → publish (build, push, cosign sign)
-  → deployer (every POLL_INTERVAL): pull ghcr.io/uye-ltd/infra-edge:latest
-      → new digest? → cosign verify (identity = ci.yml@refs/heads/main)
-      → docker compose --project-name infra-edge --project-directory /workspace-edge up -d --no-deps nginx
-      → scripts/wait-healthy.sh (on_update, blocking)
-```
-
-- `docker-compose.infra-runner.yml` is appended to `COMPOSE_FILE` in infra-runner's
-  `.env` (with `EDGE_COMPOSE_DIR=/home/ghrunner/infra-edge`); it mounts the checkout at
-  `/workspace-edge:ro` and the descriptor at `/plugins/infra-edge.plugin`.
-- compose runs **inside the deployer container**, so relative bind mounts in
-  `docker-compose.yml` would resolve to container paths. Production nginx uses only
-  named volumes and `env_file: .env`; the Certbot credentials path is absolute
-  and used only by the Certbot profile.
-- The deployer's socket proxy disables EXEC: post-deploy hooks may only use `docker inspect`
-  / other non-exec API calls. `wait-healthy.sh` polls `.State.Health` of `uye-edge`
-  (`WAIT_HEALTHY_TIMEOUT`, default 120 s).
-- **Image-only GitOps.** Only what is inside the image deploys automatically (`nginx/**`,
-  `Dockerfile`). `docker-compose.yml`, the descriptor and the hook script are read from the
-  server checkout, kept current by a `git pull --ff-only` cron. Server `.env` edits need a
-  manual Compose call with both production `-f` files.
-- No automatic rollback: a failed verify / `compose up` / health wait sets the deployer's
-  `/health` to 503 and leaves the new container in place. Roll back by reverting on `main`.
-- The GHCR package must be public (on the GitHub App path deployer pulls anonymously).
-
-### First certificate issuance
-
-nginx cannot start without the certificate files. Ansible's `edge-prepare.yml`
-issues a four-name certificate with Cloudflare DNS-01 while Caddy still owns
-ports 80/443. The credential file is mode 0600 under
-`/home/ghrunner/.config/infra-edge`, outside the checkout. The Certbot service
-uses `certbot/dns-cloudflare` and a named certificate `edge-sites`:
-
-```bash
-ansible-playbook -i inventory/hosts.yml playbooks/edge-prepare.yml
-ansible-playbook -i inventory/hosts.yml playbooks/edge-cutover.yml
-```
-
-The cutover registers the deployer plugin, which verifies the signed image before
-pulling it. Never bootstrap with an unverified `docker compose pull nginx`.
-
-### Certificate renewal
-
-```bash
-# cron as ghrunner (see scripts/certbot-renew.sh)
-0 3 * * * /home/ghrunner/infra-edge/scripts/certbot-renew.sh >> /home/ghrunner/certbot-renew.log 2>&1
-```
-
-`certbot-renew.sh` overrides the certbot container command to `renew` (not `certonly`).
-After renewal it runs `nginx -s reload` to pick up the new certificate without downtime.
-
-### Cert volume layout (inside container)
-
-```
-/etc/nginx/ssl/                              ← certbot_certs volume (mounted :ro in nginx)
-└── live/
-    └── edge-sites/
-        ├── fullchain.pem                    ← ssl_certificate
-        ├── privkey.pem                      ← ssl_certificate_key
-        └── chain.pem                        ← ssl_trusted_certificate (OCSP)
-```
-
-`certbot_certs` maps to `/etc/letsencrypt` inside the certbot container, where
-Let's Encrypt stores `live/`, `archive/`, `renewal/` directories. Nginx sees it
-read-only at `/etc/nginx/ssl`.
-
----
+NGINX uses the host network and the existing `infra-edge_certbot_certs` named volume. Certbot renewal remains in `scripts/certbot-renew.sh`; the executor handles NGINX health after image updates. Caddy migration playbooks are historical and must not be used for the deployer isolation cutover.
 
 ## Prometheus / observability
 

@@ -1,14 +1,4 @@
-# Overlay for infra-runner's deployer service (not used by this repo's own stack).
-#
-# Mounts the infra-edge checkout and the plugin descriptor into the deployer so it
-# can watch ghcr.io/<org>/infra-edge and recreate the nginx service on a new image.
-#
-# Activate in infra-runner's .env:
-#   EDGE_COMPOSE_DIR=/home/ghrunner/infra-edge
-#   COMPOSE_FILE=docker-compose.yml:<other overlays>:../infra-edge/docker-compose.infra-runner.yml
-# then: docker compose up -d deployer
-services:
-  deployer:
-    volumes:
-      - ${EDGE_COMPOSE_DIR}:/workspace-edge:ro
-      - ${EDGE_COMPOSE_DIR}/.infra-runner.plugin:/plugins/infra-edge.plugin:ro
+# Retired: release management is owned by infra-ansible/roles/uye_deploy.
+# This overlay is intentionally inert so stale COMPOSE_FILE entries cannot restore
+# poller secret mounts or Docker API access.
+services: {}
