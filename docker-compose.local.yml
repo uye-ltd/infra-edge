@@ -26,6 +26,10 @@ services:
       context: .
       dockerfile: Dockerfile
     image: infra-edge:local
+    # The local key is generated as the host user with mode 0600. On Linux,
+    # container root needs this capability to read it through the bind mount.
+    cap_add:
+      - DAC_READ_SEARCH
     volumes:
       # Mount locally generated certs instead of Let's Encrypt
       - ./certs/local:/etc/nginx/ssl:ro
