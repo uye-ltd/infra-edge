@@ -57,13 +57,12 @@ check() {
         -v "$WORK/cert.pem:$(env_value "$env_file" NGINX_SSL_CERT_PATH):ro" \
         -v "$WORK/key.pem:$(env_value "$env_file" NGINX_SSL_KEY_PATH):ro" \
         -v "$WORK/cert.pem:$(env_value "$env_file" NGINX_SSL_CHAIN_PATH):ro" \
-        -v "$out:/out" \
         "$@" \
         --entrypoint sh "$IMAGE" -c '
             /docker-entrypoint.d/20-envsubst-on-templates.sh > /dev/null &&
             { out=$(nginx -t -q 2>&1) || { echo "$out" >&2; exit 1; }; } &&
             { echo "$out" | grep -v "ssl_stapling\" ignored" >&2 || true; } &&
-            cp -a /etc/nginx/. /out/'
+            tar -C /etc/nginx -cf - .' | tar -C "$out" -xf -
 
     echo "==> [$name] gixy"
     docker run --rm -v "$out:/etc/nginx:ro" "$GIXY_IMAGE" --skips "$GIXY_SKIPS" /etc/nginx/nginx.conf
