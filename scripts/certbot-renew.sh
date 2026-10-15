@@ -9,10 +9,12 @@ EDGE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting certificate renewal ..."
 
-# .env selects the production host-network overlay, but certbot itself needs
-# neither host networking nor free HTTP ports.
+# Use host paths explicitly: the production .env names /workspace-edge paths
+# for Compose inside the deployer container.
 cd "$EDGE_DIR"
 docker compose \
+    -f "$EDGE_DIR/docker-compose.yml" \
+    -f "$EDGE_DIR/docker-compose.production.yml" \
     --profile certbot \
     run --rm --no-deps certbot renew --quiet
 

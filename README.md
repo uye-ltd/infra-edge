@@ -185,13 +185,19 @@ ansible-playbook -i inventory/hosts.yml playbooks/edge-rollback.yml
 Never run `docker compose pull nginx` as a bootstrap step: that would bypass
 deployer signature verification.
 
+The server `.env` uses absolute `/workspace-edge` paths in `COMPOSE_FILE` for
+Compose inside the deployer. Host-side Compose commands must pass both files
+explicitly (`-f docker-compose.yml -f docker-compose.production.yml`); the
+Ansible playbooks and `scripts/certbot-renew.sh` do this. The `.env` is owned by
+`ghrunner:root` with mode `0640` so the capability-restricted deployer can read it.
+
 ### What deploys automatically
 
 | Change | How it reaches the server |
 |---|---|
 | `nginx/**`, `Dockerfile` (everything inside the image) | automatically: new signed image → deployer recreates nginx |
 | Compose files, `.infra-runner.plugin`, `scripts/wait-healthy.sh` | after the `git pull` cron; compose changes apply with the next image update or a deliberate service recreation |
-| server `.env` | manual `docker compose up -d nginx` |
+| server `.env` | manual Compose with both production `-f` files |
 
 A failed signature check, `compose up` or health wait marks the deployer's
 `GET :8080/health` as `503`; there is no automatic rollback. Deployer logs:

@@ -386,7 +386,11 @@ if it is not reachable. Production sets this to `127.0.0.1` but does not enable
 the UYE site until Go Gateway exists. Local development uses the `uye-edge`
 bridge network and a stub named `go-gateway`.
 
-Production `.env` sets `COMPOSE_FILE=docker-compose.yml:docker-compose.production.yml`.
+Production `.env` sets `COMPOSE_FILE=/workspace-edge/docker-compose.yml:/workspace-edge/docker-compose.production.yml`
+for Compose inside the deployer. Host commands, including `certbot-renew.sh`,
+must pass the host paths with explicit `-f` flags. Ansible installs `.env` as
+`ghrunner:root` mode `0640` because the deployer runs as root with all
+capabilities dropped and cannot read a ghrunner-owned mode `0600` file.
 The overlay resets published ports/networks and sets `network_mode: host`. This
 is required for the host-local Vault and Portainer endpoints and correct VPN
 client addresses. Do not publish ports alongside host networking.
@@ -565,7 +569,7 @@ push to main → ci.yml: lint, config, smoke → publish (build, push, cosign si
 - **Image-only GitOps.** Only what is inside the image deploys automatically (`nginx/**`,
   `Dockerfile`). `docker-compose.yml`, the descriptor and the hook script are read from the
   server checkout, kept current by a `git pull --ff-only` cron. Server `.env` edits need a
-  manual `docker compose up -d nginx`.
+  manual Compose call with both production `-f` files.
 - No automatic rollback: a failed verify / `compose up` / health wait sets the deployer's
   `/health` to 503 and leaves the new container in place. Roll back by reverting on `main`.
 - The GHCR package must be public (on the GitHub App path deployer pulls anonymously).
