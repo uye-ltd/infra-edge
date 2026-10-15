@@ -104,7 +104,8 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          cosign sign --yes \
+          # The host verifier and promotion job read the legacy OCI signature tag.
+          cosign sign --yes --new-bundle-format=false \
             "${IMAGE}@${DIGEST}"
 
   promote:
@@ -129,8 +130,15 @@ jobs:
         run: |
           set -euo pipefail
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main"
-          verified=$(cosign verify --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com "${IMAGE}:${GITHUB_SHA}")
-          digest=$(jq -er '[.[].critical.image."docker-manifest-digest"] | unique | if length == 1 then .[0] else empty end' <<< "$verified")
+          verified=$(cosign verify \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${IMAGE}:${GITHUB_SHA}")
+          digest=$(jq -er \
+            '[.[].critical.image."docker-manifest-digest"] | unique | if length == 1 then .[0] else empty end' \
+            <<< "$verified")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          docker buildx imagetools create --prefer-index=false --metadata-file /tmp/promoted.json --tag "${IMAGE}:latest" "${IMAGE}@${digest}"
+          docker buildx imagetools create \
+            --prefer-index=false --metadata-file /tmp/promoted.json \
+            --tag "${IMAGE}:latest" "${IMAGE}@${digest}"
           test "$(jq -r '."containerimage.descriptor".digest' /tmp/promoted.json)" = "$digest"
