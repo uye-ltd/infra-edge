@@ -1,0 +1,20 @@
+# Plugin descriptor for infra-runner's GitOps deployer.
+# Sourced as shell — variables expand from the deployer's environment at load time.
+# Format reference: infra-runner/deployer/PLUGINS.md. Mounted into the deployer by
+# deploy/docker-compose.infra-runner.yml.
+
+PLUGIN_NAME=infra-edge
+PLUGIN_IMAGE=ghcr.io/${GITHUB_ORG}/infra-edge:latest
+# Exact match on the workflow that signs the image (ci.yml, job publish).
+PLUGIN_CERT_IDENTITY=https://github.com/${GITHUB_ORG}/infra-edge/.github/workflows/ci.yml@refs/heads/main
+PLUGIN_COMPOSE_PROJECT=infra-edge
+# Repo root: holds docker-compose.yml and (on the server) .env. The deployer runs
+# `docker compose --project-directory <this>` with no -f/--env-file.
+PLUGIN_COMPOSE_DIR=/workspace-edge
+PLUGIN_COMPOSE_SERVICE=nginx
+
+# After an update, wait for the container healthcheck; failure marks the deployer
+# unhealthy (no automatic rollback). Path is relative to PLUGIN_COMPOSE_DIR.
+PLUGIN_POST_DEPLOY_0_SCRIPT=scripts/wait-healthy.sh
+PLUGIN_POST_DEPLOY_0_RUN=on_update
+PLUGIN_POST_DEPLOY_0_BLOCKING=true
