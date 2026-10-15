@@ -1,4 +1,4 @@
-# ---- Site: uye (UYE platform API) --------------------------------------------
+# Future site: UYE platform API. Not rendered in production until go-gateway exists.
 # TLS termination + reverse proxy to the Go Gateway upstream (go_gateway,
 # defined in upstream.conf.template). Rate-limit zones api_per_ip / auth /
 # general are defined in rate-limit.conf.template.

@@ -19,6 +19,18 @@ hurl --test --jobs 1 --cacert "$CACERT" \
     --connect-to "demo.localhost:443:$EDGE:443" \
     ./*.hurl
 
+echo "==> migrated Caddy hosts: private sites reject non-VPN clients"
+for host in filebrowser.uye.rocks vault.uye.rocks portainer.uye.rocks; do
+    code=$(curl -ksS -o /dev/null -w '%{http_code}' \
+        --connect-to "$host:443:$EDGE:443" \
+        -H 'X-Forwarded-For: 10.0.0.2' "https://$host/")
+    if [ "$code" != 403 ]; then
+        echo "FAIL  $host accepted a non-VPN client (HTTP $code)" >&2
+        exit 1
+    fi
+    echo "ok    $host rejects forged VPN address"
+done
+
 echo "==> unknown host is dropped (444: connection closed, no response)"
 fail=0
 expect_dropped() {
@@ -39,6 +51,8 @@ for proto in --http1.1 --http2; do
     expect_dropped "SNI unknown.localhost ($proto)" "$proto" --insecure \
         --connect-to "unknown.localhost:443:$EDGE:443" https://unknown.localhost/
 done
+expect_dropped "retired navidromed.uye.rocks" --insecure \
+    --connect-to "navidromed.uye.rocks:443:$EDGE:443" https://navidromed.uye.rocks/
 
 [ "$fail" -eq 0 ] && echo "smoke: OK"
 exit "$fail"

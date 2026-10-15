@@ -21,8 +21,7 @@ cd "$ROOT"
 #   hsts_header           reported for the :80 / :443 default servers, which
 #                         never serve a site; sites get HSTS from
 #                         snippets/security-headers.conf (checked by smoke tests)
-#   try_files_is_evil_too ACME webroot only; negligible traffic
-GIXY_SKIPS=resolver_external,add_header_redefinition,hsts_header,try_files_is_evil_too
+GIXY_SKIPS=resolver_external,add_header_redefinition,hsts_header
 
 IMAGE=uye-edge:test
 GIXY_IMAGE=uye-edge-gixy:test
@@ -46,8 +45,15 @@ check() {
     mkdir -p "$out"
     echo "==> [$name] nginx -t"
 
+    local upstream_host
+    upstream_host=$(env_value "$env_file" NGINX_UPSTREAM_HOST)
+    local -a host_args=()
+    if [[ "$upstream_host" != 127.0.0.1 ]]; then
+        host_args=(--add-host "$upstream_host:127.0.0.1")
+    fi
+
     docker run --rm --env-file "$env_file" \
-        --add-host "$(env_value "$env_file" NGINX_UPSTREAM_HOST):127.0.0.1" \
+        "${host_args[@]}" \
         -v "$WORK/cert.pem:$(env_value "$env_file" NGINX_SSL_CERT_PATH):ro" \
         -v "$WORK/key.pem:$(env_value "$env_file" NGINX_SSL_KEY_PATH):ro" \
         -v "$WORK/cert.pem:$(env_value "$env_file" NGINX_SSL_CHAIN_PATH):ro" \

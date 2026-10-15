@@ -1,0 +1,15 @@
+# Loaded from the production .env through COMPOSE_FILE. Local development keeps
+# the bridge network and published ports from docker-compose.yml.
+services:
+  nginx:
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
+    depends_on: !reset null
+
+  nginx-exporter:
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
+    command:
+      - -nginx.scrape-uri=http://127.0.0.1/nginx-status

@@ -20,8 +20,6 @@ services:
     volumes:
       # TLS certificates provisioned by Certbot (read-only inside nginx)
       - certbot_certs:/etc/nginx/ssl:ro
-      # Certbot webroot for ACME challenge files
-      - certbot_webroot:/var/www/certbot:ro
     # Logs: no volume. The base image symlinks /var/log/nginx/{access,error}.log
     # to stdout/stderr, so logs go to the Docker logging driver
     # (`docker logs uye-edge`); ship them from there (Loki, ELK, ...).
@@ -67,25 +65,28 @@ services:
       start_period: 15s
 
   # ---------------------------------------------------------------------------
-  # Certbot — certificate issuance and renewal
-  # Run once manually: docker compose run --rm certbot
-  # Renewal is handled by the certbot-renew.sh cron/script on the host.
+  # DNS-01 permits issuance before Caddy releases ports 80/443.
+  # The credentials file stays outside this checkout and is never mounted in nginx.
   # ---------------------------------------------------------------------------
   certbot:
-    image: certbot/certbot:latest
+    image: certbot/dns-cloudflare:v5.8.0
     container_name: uye-certbot
     volumes:
       - certbot_certs:/etc/letsencrypt
-      - certbot_webroot:/var/www/certbot
+      - ${EDGE_CLOUDFLARE_CREDENTIALS_HOST_PATH:-/tmp/infra-edge-cloudflare.ini}:/run/secrets/cloudflare.ini:ro
     command: >
-      certonly --webroot
-      --webroot-path=/var/www/certbot
+      certonly --dns-cloudflare
+      --dns-cloudflare-credentials /run/secrets/cloudflare.ini
+      --cert-name edge-sites
       --email ${CERTBOT_EMAIL}
       --agree-tos
       --no-eff-email
+      --non-interactive
       --keep-until-expiring
-      -d ${NGINX_DOMAIN}
-      -d www.${NGINX_DOMAIN}
+      -d navidrome.uye.rocks
+      -d filebrowser.uye.rocks
+      -d vault.uye.rocks
+      -d portainer.uye.rocks
     profiles:
       - certbot
 
@@ -126,7 +127,6 @@ services:
 # ---------------------------------------------------------------------------
 volumes:
   certbot_certs:
-  certbot_webroot:
 
 # ---------------------------------------------------------------------------
 # Networks

@@ -8,6 +8,8 @@ cd "$(dirname "$0")/../.."
 
 docker compose --env-file .env.example -f docker-compose.yml \
     config --no-env-resolution -q
+docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.production.yml \
+    config --no-env-resolution -q
 docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.local.yml \
     config --no-env-resolution -q
 

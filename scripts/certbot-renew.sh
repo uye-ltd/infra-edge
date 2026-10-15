@@ -5,16 +5,20 @@
 #   0 3 * * * /home/ghrunner/infra-edge/scripts/certbot-renew.sh >> /home/ghrunner/certbot-renew.log 2>&1
 set -euo pipefail
 
-COMPOSE_FILE="$(cd "$(dirname "$0")/.." && pwd)/docker-compose.yml"
+EDGE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting certificate renewal ..."
 
-# Run certbot renew inside the certbot container
-docker compose -f "$COMPOSE_FILE" \
+# .env selects the production host-network overlay, but certbot itself needs
+# neither host networking nor free HTTP ports.
+cd "$EDGE_DIR"
+docker compose \
     --profile certbot \
-    run --rm certbot renew --quiet
+    run --rm --no-deps certbot renew --quiet
 
 # Reload nginx config so it picks up the refreshed certificates
-docker compose -f "$COMPOSE_FILE" exec nginx nginx -s reload
+if [ "$(docker inspect --format '{{.State.Running}}' uye-edge 2>/dev/null || true)" = true ]; then
+    docker kill --signal HUP uye-edge >/dev/null
+fi
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Certificate renewal complete."

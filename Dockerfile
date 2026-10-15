@@ -1,4 +1,4 @@
-FROM nginx:1.27-alpine
+FROM docker.io/library/nginx:1.27-alpine
 
 # Links the GHCR package to the repository.
 LABEL org.opencontainers.image.source="https://github.com/uye-ltd/infra-edge"
@@ -28,7 +28,7 @@ ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/generated
 #   certbot      webroot for ACME challenges
 #   ssl/         TLS certificates (mounted at runtime)
 # plus non-root ownership of the log directory.
-RUN mkdir -p /etc/nginx/generated /etc/nginx/local-sites /var/www/certbot /etc/nginx/ssl \
+RUN mkdir -p /etc/nginx/generated /etc/nginx/local-sites /etc/nginx/ssl \
     && chown -R nginx:nginx /var/log/nginx
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

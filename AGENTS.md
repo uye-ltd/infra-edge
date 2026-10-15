@@ -67,7 +67,8 @@ Browser  ──HTTPS──▶  uye-edge (this repo)  ──HTTP──▶  Go Gat
 ```
 uye-edge/
 ├── Dockerfile
-├── docker-compose.yml          # Production (project `infra-edge`; nginx from GHCR, certbot*, nginx-exporter*, go-gateway*)
+├── docker-compose.yml          # Base services (project `infra-edge`; nginx from GHCR, certbot*, nginx-exporter*, go-gateway*)
+├── docker-compose.production.yml # Host network; loaded by production .env
 ├── docker-compose.local.yml    # Local overrides — local build, local cert, stub upstream, hot-reload mounts
 ├── docker-compose.infra-runner.yml # Overlay for the infra-runner deployer: mounts repo + descriptor
 ├── .infra-runner.plugin        # infra-runner deployer plugin descriptor (image, cert identity, hook)
@@ -92,12 +93,16 @@ uye-edge/
 │   ├── templates/              # envsubst templates — rendered to /etc/nginx/generated/ at startup
 │   │   ├── rate-limit.conf.template     → generated/rate-limit.conf
 │   │   ├── upstream.conf.template       → generated/upstream.conf      (go_gateway)
-│   │   ├── http-server.conf.template    → generated/http-server.conf   (:80 default server, all hosts)
+│   │   ├── http-server.conf.template    → generated/http-server.conf   (:80 redirect and health)
 │   │   ├── https-server.conf.template   → generated/https-server.conf  (:443 default server, unknown hosts → 444)
 │   │   └── sites/                       # one file per application
-│   │       └── uye.conf.template        → generated/sites/uye.conf     (UYE platform API → go_gateway)
+│   │       ├── navidrome.conf.template  → public site
+│   │       ├── filebrowser.conf.template → VPN-only site
+│   │       ├── vault.conf.template      → VPN-only site
+│   │       └── portainer.conf.template  → VPN-only site
 │   └── examples/
-│       └── app.conf.template   # Starting point for a new site (not copied into the image)
+│       ├── app.conf.template   # Starting point for a new site (not copied into the image)
+│       └── uye.conf.template   # Future Go Gateway site, inactive in production
 ├── scripts/
 │   ├── init-local-env.sh       # Local: generate .env.local from .env.example + local overrides
 │   ├── generate-local-certs.sh # Local: certs/local/{cert,key,ca}.pem via mkcert (fallback: openssl)
@@ -110,7 +115,8 @@ uye-edge/
 │   ├── observability/          # 'monitoring' profile: prometheus.yml, loki.yml,
 │   │                           #   config.alloy, grafana/{provisioning,dashboards}
 │   └── sites/
-│       └── demo.conf           # Static second site on demo.localhost → /etc/nginx/local-sites/
+│       ├── demo.conf           # Static second site on demo.localhost
+│       └── uye.conf            # Local-only Go Gateway site
 ├── tests/
 │   ├── config/
 │   │   ├── check-env-vars.sh   # ${VAR} in templates ⇔ .env.example ⇔ compose interpolation
@@ -194,21 +200,17 @@ fail nginx config validation (`nginx -t`).
 
 | Variable | Format | Example | Notes |
 |---|---|---|---|
-| `NGINX_DOMAIN` | hostname | `api.example.com` | Used as `server_name` in both server blocks, and in default cert paths |
 | `CERTBOT_EMAIL` | email | `ops@example.com` | Used only by `certbot` profile |
-| `NGINX_SSL_CERT_PATH` | absolute path | `/etc/nginx/ssl/live/api.example.com/fullchain.pem` | Must exist inside container at runtime |
-| `NGINX_SSL_KEY_PATH` | absolute path | `/etc/nginx/ssl/live/api.example.com/privkey.pem` | Must exist inside container at runtime |
-| `NGINX_SSL_CHAIN_PATH` | absolute path | `/etc/nginx/ssl/live/api.example.com/chain.pem` | Required for OCSP stapling (`ssl_trusted_certificate`) |
-| `NGINX_UPSTREAM_HOST` | hostname/IP | `go-gateway` | Docker service name or external hostname |
+| `EDGE_CLOUDFLARE_CREDENTIALS_HOST_PATH` | absolute path | `/home/ghrunner/.config/infra-edge/cloudflare.ini` | Host-only file mounted into Certbot; never put it in the checkout |
+| `NGINX_SSL_CERT_PATH` | absolute path | `/etc/nginx/ssl/live/edge-sites/fullchain.pem` | Must exist inside container at runtime |
+| `NGINX_SSL_KEY_PATH` | absolute path | `/etc/nginx/ssl/live/edge-sites/privkey.pem` | Must exist inside container at runtime |
+| `NGINX_SSL_CHAIN_PATH` | absolute path | `/etc/nginx/ssl/live/edge-sites/chain.pem` | Required for OCSP stapling (`ssl_trusted_certificate`) |
+| `NGINX_UPSTREAM_HOST` | hostname/IP | `127.0.0.1` | Reserved Go Gateway upstream; production site is inactive |
 | `NGINX_UPSTREAM_PORT` | port | `8080` | Port the Go Gateway listens on |
 | `NGINX_LB_ALGORITHM` | nginx directive or empty | `least_conn;` | **Must include the trailing semicolon**, or be empty for round-robin. See below. |
 | `NGINX_RATE_LIMIT_RATE` | nginx rate | `100r/m` | `limit_req_zone` rate for `api_per_ip` zone |
-| `NGINX_RATE_LIMIT_BURST` | integer | `20` | `limit_req burst=` value for `/api/` |
 | `NGINX_RATE_LIMIT_AUTH_RATE` | nginx rate | `10r/m` | Rate for `auth` zone |
-| `NGINX_RATE_LIMIT_AUTH_BURST` | integer | `5` | Burst for `/api/auth/` |
 | `NGINX_RATE_LIMIT_GENERAL_RATE` | nginx rate | `200r/m` | Rate for `general` zone |
-| `NGINX_RATE_LIMIT_GENERAL_BURST` | integer | `50` | Burst for catch-all `/` |
-| `NGINX_CONN_LIMIT_PER_IP` | integer | `20` | `limit_conn conn_per_ip` value in all location blocks |
 | `GO_GATEWAY_IMAGE` | Docker image | `nginx:alpine` | Only used by `go-gateway` service under `stub` profile |
 
 ### NGINX_LB_ALGORITHM special handling
@@ -266,7 +268,7 @@ If you set it to `least_conn` without the semicolon, nginx config validation wil
 - `ssl_prefer_server_ciphers off` — for TLS 1.3 this is meaningless (client always chooses); for TLS 1.2 this lets the client pick from the allowed list rather than forcing server order. Mozilla Intermediate profile recommends `off`.
 - `ssl_session_tickets off` — session tickets compromise forward secrecy if the ticket key leaks. Disabled in favor of session cache.
 - `ssl_session_cache shared:SSL:50m` — 50 MB shared across all workers. 1 MB ≈ 4000 sessions. 50 MB handles ~200k concurrent sessions.
-- OCSP stapling requires `ssl_trusted_certificate` (the CA chain) to be set in the server block — this is why `NGINX_SSL_CHAIN_PATH` is a required variable and referenced in `https-server.conf.template` and `sites/uye.conf.template`. Every site needs its own chain path.
+- OCSP stapling requires `ssl_trusted_certificate` (the CA chain) to be set in the server block. The four production sites share the `edge-sites` SAN certificate and chain.
 - `resolver 1.1.1.1 8.8.8.8` — used for OCSP stapling DNS resolution. In Kubernetes or air-gapped environments, replace with the cluster DNS resolver.
 - DH params are commented out. If re-enabled, generate with `openssl dhparam -out /etc/nginx/ssl/dhparam.pem 2048` (takes ~30s). Mount the file into the container.
 
@@ -274,8 +276,8 @@ If you set it to `least_conn` without the semicolon, nginx config validation wil
 
 ## conf.d/proxy-params.conf — nuances
 
-- `proxy_http_version 1.1` + `proxy_set_header Connection ""` — **both are required** for upstream keepalive to function. Without these, nginx uses HTTP/1.0, which does not support persistent connections, making the `keepalive 32` directive in the upstream block useless.
-- `proxy_set_header Connection ""` clears the `Connection` header from the client (which might say `close` or list hop-by-hop headers). Clearing it allows keepalive to be negotiated between nginx and the upstream.
+- `proxy_http_version 1.1` and the `$proxy_connection` map keep normal upstream requests persistent while forwarding WebSocket upgrades.
+- `X-Forwarded-For` is set to `$remote_addr`, ignoring client-supplied chains. VPN access checks use `$remote_addr` directly.
 - `proxy_hide_header X-Powered-By` and `proxy_hide_header Server` — prevents the Go Gateway from leaking its technology stack in responses.
 - `proxy_next_upstream error timeout` — retries the next upstream server ONLY on connection-level failures. Intentionally does NOT include `http_500`, `http_502`, etc. Retrying on 500 would cause side effects (duplicate writes) on non-idempotent requests. If Go Gateway returns a 5xx, that error is passed to the client.
 - `proxy_next_upstream_tries 2` — tries at most 2 servers total (1 original + 1 retry). With a single upstream server, this has no effect but is ready for multi-instance deployments.
@@ -293,7 +295,7 @@ in individual location blocks; make all header changes in `proxy-params.conf`.
 
 ## nginx/templates/upstream.conf.template — nuances
 
-- The upstream name `go_gateway` is hardcoded. All `proxy_pass http://go_gateway;` directives (currently in `sites/uye.conf.template`) reference this name. Do not rename it without updating every site that uses it.
+- The upstream name `go_gateway` is hardcoded. The local-only `local/sites/uye.conf` references it; production has no UYE site until Go Gateway is deployed.
 - Upstreams for other applications are declared in their own site file, not here (see "Adding a new application").
 - `max_fails=3 fail_timeout=30s` — nginx marks a server as unavailable after 3 consecutive connection failures within 30s. It re-tests the server after 30s. This is passive health checking (nginx does not actively probe).
 - Active health checks (`health_check` directive) require `nginx-plus`. The open-source version relies on this passive mechanism. Combine with a monitoring alert on `upstream_status` in access logs to detect degradation.
@@ -303,8 +305,8 @@ in individual location blocks; make all header changes in `proxy-params.conf`.
 
 ## Default servers — http-server / https-server templates
 
-- `http-server.conf.template` is the `default_server` on :80 for **all** hosts: ACME
-  challenge, `/healthz`, `/nginx-status`, and a 301 to HTTPS. Sites do not define
+- `http-server.conf.template` is the `default_server` on :80 for **all** hosts:
+  `/healthz`, `/nginx-status`, and a 301 to HTTPS. DNS-01 handles certificates. Sites do not define
   their own :80 server.
 - `https-server.conf.template` is the `default_server` on :443. It uses the platform
   certificate (`NGINX_SSL_*`), serves only `/healthz` and `/nginx-status`, and returns
@@ -313,7 +315,7 @@ in individual location blocks; make all header changes in `proxy-params.conf`.
 
 ---
 
-## nginx/templates/sites/uye.conf.template — nuances
+## Local-only UYE site — nuances
 
 ### Location matching order and priority
 
@@ -380,10 +382,14 @@ because `go-gateway` exists only under the `stub` profile. Without `required: fa
 compose refuses to start (`depends on undefined service "go-gateway"`).
 Compose will start nginx without the stub, but nginx itself still resolves
 `NGINX_UPSTREAM_HOST` at startup and exits with `host not found in upstream`
-if it is not reachable. In production, the real Go Gateway runs in a separate
-stack and joins the network externally. The network has a fixed name, `uye-edge`
-(`networks.edge.name`), so other stacks reference it as
-`networks: { uye-edge: { external: true } }` regardless of the compose project name.
+if it is not reachable. Production sets this to `127.0.0.1` but does not enable
+the UYE site until Go Gateway exists. Local development uses the `uye-edge`
+bridge network and a stub named `go-gateway`.
+
+Production `.env` sets `COMPOSE_FILE=docker-compose.yml:docker-compose.production.yml`.
+The overlay resets published ports/networks and sets `network_mode: host`. This
+is required for the host-local Vault and Portainer endpoints and correct VPN
+client addresses. Do not publish ports alongside host networking.
 
 The compose project name is pinned with top-level `name: infra-edge`: the deployer
 (`--project-name infra-edge`), `certbot-renew.sh` (`-f docker-compose.yml`) and manual
@@ -513,8 +519,8 @@ stay on GitHub-hosted runners — they need Docker.
 `make smoke` runs the `smoke` service (`docker-compose.local.yml`, profile `test`)
 on the `edge` network: `tests/smoke/run.sh` routes every local hostname to the
 `nginx` service with `--connect-to` and trusts `certs/local/ca.pem`, so TLS/SNI
-behave as from a browser. Coverage: health on :80/:443, 80→443 redirect, ACME
-webroot, stub_status, security headers per site, routing per site and X-Request-ID
+behave as from a browser. Coverage: health on :80/:443, 80→443 redirect,
+stub_status, security headers on local sites, routing and X-Request-ID
 propagation, method/UA/sensitive-path guard rails, JSON 429 with `Retry-After`,
 and — with curl, since hurl cannot assert "no response" — 444 for unknown Host/SNI.
 
@@ -523,8 +529,8 @@ and — with curl, since hurl cannot assert "no response" — 444 for unknown Ho
 - The stubs echo `host`, `path` and `request_id`; assertions rely on these fields.
 - Stub configs are single-file bind mounts: after editing one, recreate the stub
   container (see "Local-only sites"), otherwise tests see the old response.
-- **Every new site or route gets hurl tests** (at least: routing to its upstream,
-  security headers, a guard-rail check). A local site for testing goes to
+- **Every new site or route gets meaningful tests** (at least: routing to its upstream
+  and any access restriction). A local site for testing goes to
   `local/sites/` and its hostname to `HOSTS` in `generate-local-certs.sh` and to
   `--connect-to` in `run.sh`.
 
@@ -551,8 +557,8 @@ push to main → ci.yml: lint, config, smoke → publish (build, push, cosign si
   `/workspace-edge:ro` and the descriptor at `/plugins/infra-edge.plugin`.
 - compose runs **inside the deployer container**, so relative bind mounts in
   `docker-compose.yml` would resolve to container paths. Production nginx uses only
-  named volumes and `env_file: .env` — keep it that way (local bind mounts belong in
-  `docker-compose.local.yml`).
+  named volumes and `env_file: .env`; the Certbot credentials path is absolute
+  and used only by the Certbot profile.
 - The deployer's socket proxy disables EXEC: post-deploy hooks may only use `docker inspect`
   / other non-exec API calls. `wait-healthy.sh` polls `.State.Health` of `uye-edge`
   (`WAIT_HEALTHY_TIMEOUT`, default 120 s).
@@ -562,21 +568,23 @@ push to main → ci.yml: lint, config, smoke → publish (build, push, cosign si
   manual `docker compose up -d nginx`.
 - No automatic rollback: a failed verify / `compose up` / health wait sets the deployer's
   `/health` to 503 and leaves the new container in place. Roll back by reverting on `main`.
-- The GHCR package must be public (deployer uses a GitHub App token, which cannot read GHCR).
+- The GHCR package must be public (on the GitHub App path deployer pulls anonymously).
 
 ### First certificate issuance
 
-nginx cannot start without the certificate files, and the image is prebuilt, so the first
-certificate is issued with certbot in standalone mode before nginx exists:
+nginx cannot start without the certificate files. Ansible's `edge-prepare.yml`
+issues a four-name certificate with Cloudflare DNS-01 while Caddy still owns
+ports 80/443. The credential file is mode 0600 under
+`/home/ghrunner/.config/infra-edge`, outside the checkout. The Certbot service
+uses `certbot/dns-cloudflare` and a named certificate `edge-sites`:
 
 ```bash
-cp .env.example .env && nano .env
-docker compose --profile certbot run --rm -p 80:80 certbot certonly --standalone --email <email> --agree-tos --no-eff-email -d <domain> -d www.<domain>
-docker compose pull nginx && docker compose up -d nginx
+ansible-playbook -i inventory/hosts.yml playbooks/edge-prepare.yml
+ansible-playbook -i inventory/hosts.yml playbooks/edge-cutover.yml
 ```
 
-Later certificates (renewals, additional domains) use the webroot flow through the running
-:80 default server.
+The cutover registers the deployer plugin, which verifies the signed image before
+pulling it. Never bootstrap with an unverified `docker compose pull nginx`.
 
 ### Certificate renewal
 
@@ -593,7 +601,7 @@ After renewal it runs `nginx -s reload` to pick up the new certificate without d
 ```
 /etc/nginx/ssl/                              ← certbot_certs volume (mounted :ro in nginx)
 └── live/
-    └── <NGINX_DOMAIN>/
+    └── edge-sites/
         ├── fullchain.pem                    ← ssl_certificate
         ├── privkey.pem                      ← ssl_certificate_key
         └── chain.pem                        ← ssl_trusted_certificate (OCSP)
@@ -670,12 +678,12 @@ The application team opens a PR against this repo; the edge owner reviews it.
 3. The site file contains the app's `upstream`, its `limit_req_zone`s, and a single
    `server` block that includes `snippets/tls.conf`, `security-headers.conf`,
    `guard-rails.conf`, `health.conf` and `error-pages.conf`. The shared
-   `conn_per_ip` zone and `NGINX_CONN_LIMIT_PER_IP` are reused.
+   the required access policy and any site-specific limits.
 4. Add every new `APP_<APP>_*` variable to `.env.example`; if the local value must
    differ, add it to the `OVERRIDES` block in `scripts/init-local-env.sh`. A missing
    variable renders as an empty string and fails `nginx -t` for **all** sites.
-5. Issue a certificate for the new domain (certbot `certonly --webroot -d <domain>`;
-   the :80 default server already serves the ACME webroot for any host).
+5. Add the domain to the DNS-01 Certbot command and reissue the `edge-sites`
+   certificate. No HTTP challenge port is needed.
 6. Rebuild the image (or `make restart` locally) and run `make test-config`.
    Add hurl smoke tests for the site in `tests/smoke/` (see "Smoke tests").
 7. Recommended: a `CODEOWNERS` entry `nginx/templates/sites/<app>.conf.template @<app-team> @<edge-owner>`.
@@ -748,6 +756,5 @@ and nginx will reject the config with a syntax error.
   in `security.conf` are lightweight guards, not a full WAF. For ModSecurity, use
   the `owasp/modsecurity-crs:nginx-alpine` base image.
 
-- **Multiple domains / SAN** are not explicitly configured. The `server_name` directive
-  uses `${NGINX_DOMAIN} www.${NGINX_DOMAIN}`. For additional domains, either add
-  them to the template as additional env vars or run separate nginx instances.
+- Production's `edge-sites` certificate covers only the four active domains;
+  add future domains to both the site configuration and Certbot command.

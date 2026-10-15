@@ -1,7 +1,9 @@
 
 # uye-edge
 
-NGINX-based edge API gateway for the UYE platform. Handles TLS termination, reverse proxying, rate limiting, compression, and observability at the network boundary before traffic reaches the internal Go Gateway.
+NGINX-based edge gateway for UYE. It terminates TLS and proxies the existing
+Navidrome, Filebrowser, Vault and Portainer sites. The Go Gateway integration
+remains local-only until that service exists in production.
 
 ```
 Browser / Client
@@ -16,12 +18,9 @@ Browser / Client
 │  - Access logging (JSON)│
 │  - X-Request-ID tracing │
 └──────────┬──────────────┘
-           │  HTTP  (internal)
-           ▼
-    Go Gateway (uye-gate)
-           │  JWT / session → JWT
-           ▼
-    Microservices
+           ├──▶ Navidrome (public)
+           ├──▶ Filebrowser / Vault / Portainer (VPN only)
+           └──▶ Go Gateway (future)
 ```
 
 ---
@@ -32,6 +31,7 @@ Browser / Client
 uye-edge/
 ├── Dockerfile
 ├── docker-compose.yml          # Production compose
+├── docker-compose.production.yml # Production host-network overlay
 ├── docker-compose.local.yml    # Local overrides (local build, local cert, stub upstream)
 ├── docker-compose.infra-runner.yml # Overlay for the infra-runner deployer (plugin mounts)
 ├── .infra-runner.plugin        # infra-runner deployer plugin descriptor
@@ -49,12 +49,12 @@ uye-edge/
 │   ├── templates/              # envsubst templates → /etc/nginx/generated/ at startup
 │   │   ├── rate-limit.conf.template
 │   │   ├── upstream.conf.template
-│   │   ├── http-server.conf.template   # :80 default server (ACME, health, redirect)
+│   │   ├── http-server.conf.template   # :80 default server (health, redirect)
 │   │   ├── https-server.conf.template  # :443 default server (unknown hosts → 444)
-│   │   └── sites/                      # One file per application served by the edge
-│   │       └── uye.conf.template
+│   │   └── sites/                      # Four production site templates
 │   └── examples/
-│       └── app.conf.template   # Starting point for a new application site
+│       ├── app.conf.template   # Starting point for a new application site
+│       └── uye.conf.template   # Future Go Gateway site
 ├── scripts/
 │   ├── init-local-env.sh       # Local: generate .env.local from .env.example
 │   ├── generate-local-certs.sh # Local: certs/local/ via mkcert (fallback: openssl)
@@ -65,7 +65,7 @@ uye-edge/
 │   ├── go-gateway-stub.conf    # nginx stub that mimics the Go Gateway locally
 │   ├── demo-stub.conf          # upstream stub for the demo site
 │   ├── observability/          # local Prometheus / Loki / Alloy / Grafana configs
-│   └── sites/demo.conf         # local-only second site on demo.localhost
+│   └── sites/                  # demo.conf and local-only uye.conf
 ├── tests/
 │   ├── config/                 # env-var sync, compose config, nginx -t + gixy
 │   └── smoke/                  # hurl smoke tests (`make smoke`)
@@ -139,65 +139,66 @@ poll cycle it pulls `infra-edge:latest`, verifies the signature against the `ci.
 identity, runs `docker compose up -d --no-deps nginx` and then `scripts/wait-healthy.sh`.
 No SSH, no deploy job.
 
-The GHCR package must be **public** (the deployer uses a GitHub App token, which cannot
-read GHCR). After the first `publish` run: package settings → Change visibility → Public.
+The GHCR package must be **public**: on the GitHub App path the deployer pulls
+anonymously. After the first `publish` run, set the package visibility to Public.
+The deployer verifies the signature before it pulls or starts the image.
 
-### First-time server setup (as `ghrunner`, next to `~/infra-runner`)
+### Caddy migration
+
+Production uses `docker-compose.production.yml` and host networking. This is
+needed because Vault and Portainer listen on the host's `127.0.0.1`; it also
+preserves the VPN client's source address for access control. Caddy currently
+owns ports 80/443, so do not start production nginx alongside it.
+
+| Hostname | Backend | Access |
+|---|---|---|
+| `navidrome.uye.rocks` | `127.0.0.1:4533` | public |
+| `filebrowser.uye.rocks` | `127.0.0.1:3001` | `10.0.0.0/24` only |
+| `vault.uye.rocks` | `127.0.0.1:8200` | `10.0.0.0/24` only |
+| `portainer.uye.rocks` | `127.0.0.1:9000` | `10.0.0.0/24` only |
+
+`navidromed.uye.rocks` is intentionally retired. The UYE application site is
+local-only until the real Go Gateway exists. Production certificates use DNS-01
+via Cloudflare, so the four-domain certificate can be issued while Caddy is live.
+The Cloudflare credentials file lives outside this checkout and is mounted only
+into Certbot, not NGINX or the deployer.
+
+The companion `infra-ansible` repo supplies three explicit playbooks. After
+publishing this repo and making the GHCR package public:
+
 ```bash
-git clone https://github.com/uye-ltd/infra-edge ~/infra-edge
-cd ~/infra-edge
-cp .env.example .env    # set NGINX_DOMAIN, CERTBOT_EMAIL, cert paths, NGINX_UPSTREAM_*
-
-# First certificate: certbot standalone on :80 before nginx exists
-# (nginx cannot start without the certificate files).
-docker compose --profile certbot run --rm -p 80:80 certbot \
-    certonly --standalone --email "$CERTBOT_EMAIL" --agree-tos --no-eff-email \
-    -d "$NGINX_DOMAIN" -d "www.$NGINX_DOMAIN"
-
-docker compose pull nginx
-docker compose up -d nginx
+ansible-playbook -i inventory/hosts.yml playbooks/edge-prepare.yml
+ansible-playbook -i inventory/hosts.yml playbooks/edge-cutover.yml
 ```
-(`CERTBOT_EMAIL` / `NGINX_DOMAIN` above are shell variables — export them or type the values.)
 
-Register the plugin in `~/infra-runner/.env`, then recreate the deployer:
+`edge-prepare.yml` clones the repo, writes `.env` and the restricted Cloudflare
+credential, validates Compose, obtains the certificate, and schedules checkout
+updates and renewal. It does not stop Caddy or register the plugin. The cutover
+playbook stops Caddy, appends the edge overlay to the runner's existing
+`COMPOSE_FILE`, and waits for the signed image to start via deployer. On failure
+it restores Caddy. To reverse a successful cutover:
+
 ```bash
-EDGE_COMPOSE_DIR=/home/ghrunner/infra-edge
-# append to the existing list (setting COMPOSE_FILE disables override.yml auto-discovery):
-COMPOSE_FILE=docker-compose.yml:<existing overlays>:../infra-edge/docker-compose.infra-runner.yml
-```
-```bash
-cd ~/infra-runner && docker compose up -d deployer
+ansible-playbook -i inventory/hosts.yml playbooks/edge-rollback.yml
 ```
 
-Cron (`crontab -e` as `ghrunner`):
-```bash
-# Keep the checkout current: compose file, descriptor and hook script are read from it
-*/5 * * * * git -C /home/ghrunner/infra-edge pull --ff-only origin main
-# Certificate renewal + nginx reload
-0 3 * * * /home/ghrunner/infra-edge/scripts/certbot-renew.sh >> /home/ghrunner/certbot-renew.log 2>&1
-```
+Never run `docker compose pull nginx` as a bootstrap step: that would bypass
+deployer signature verification.
 
 ### What deploys automatically
 
 | Change | How it reaches the server |
 |---|---|
 | `nginx/**`, `Dockerfile` (everything inside the image) | automatically: new signed image → deployer recreates nginx |
-| `docker-compose.yml`, `.infra-runner.plugin`, `scripts/wait-healthy.sh` | after the `git pull` cron; compose changes apply with the next image update or `docker compose up -d nginx` |
+| Compose files, `.infra-runner.plugin`, `scripts/wait-healthy.sh` | after the `git pull` cron; compose changes apply with the next image update or a deliberate service recreation |
 | server `.env` | manual `docker compose up -d nginx` |
 
 A failed signature check, `compose up` or health wait marks the deployer's
 `GET :8080/health` as `503`; there is no automatic rollback. Deployer logs:
 `docker compose -f ~/infra-runner/docker-compose.yml logs -f --no-log-prefix deployer | jq .`
 
-### Upstream network
-The `edge` network has a fixed name, `uye-edge`. The Go Gateway stack joins it as an
-external network and must be up before nginx starts (nginx resolves
-`NGINX_UPSTREAM_HOST` at startup):
-```yaml
-networks:
-  uye-edge:
-    external: true
-```
+The `uye-edge` bridge network remains for local development. Production nginx
+uses the host network and proxies to the four host-local services above.
 
 ---
 
@@ -205,21 +206,17 @@ networks:
 
 | Variable | Default | Description |
 |---|---|---|
-| `NGINX_DOMAIN` | `example.com` | Primary domain (also applied to `www.`) |
 | `CERTBOT_EMAIL` | — | Email for Let's Encrypt account |
+| `EDGE_CLOUDFLARE_CREDENTIALS_HOST_PATH` | — | Host path to Certbot's restricted Cloudflare credential file |
 | `NGINX_SSL_CERT_PATH` | `/etc/nginx/ssl/live/…/fullchain.pem` | Path to TLS certificate inside container |
 | `NGINX_SSL_KEY_PATH` | `/etc/nginx/ssl/live/…/privkey.pem` | Path to TLS private key |
 | `NGINX_SSL_CHAIN_PATH` | `/etc/nginx/ssl/live/…/chain.pem` | Path to CA chain (for OCSP stapling) |
-| `NGINX_UPSTREAM_HOST` | `go-gateway` | Go Gateway hostname |
-| `NGINX_UPSTREAM_PORT` | `8080` | Go Gateway port |
+| `NGINX_UPSTREAM_HOST` | `127.0.0.1` | Reserved Go Gateway upstream; production site disabled |
+| `NGINX_UPSTREAM_PORT` | `8080` | Reserved Go Gateway port |
 | `NGINX_LB_ALGORITHM` | _(empty = round-robin)_ | `least_conn;` or `ip_hash;` |
 | `NGINX_RATE_LIMIT_RATE` | `100r/m` | `/api/*` rate limit |
-| `NGINX_RATE_LIMIT_BURST` | `20` | `/api/*` burst |
 | `NGINX_RATE_LIMIT_AUTH_RATE` | `10r/m` | `/api/auth/*` rate limit |
-| `NGINX_RATE_LIMIT_AUTH_BURST` | `5` | `/api/auth/*` burst |
 | `NGINX_RATE_LIMIT_GENERAL_RATE` | `200r/m` | All other routes rate limit |
-| `NGINX_RATE_LIMIT_GENERAL_BURST` | `50` | All other routes burst |
-| `NGINX_CONN_LIMIT_PER_IP` | `20` | Max concurrent connections per IP |
 
 ---
 

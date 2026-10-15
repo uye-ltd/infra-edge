@@ -1,0 +1,14 @@
+# VPN-only Portainer site migrated from Caddy.
+server {
+    include /etc/nginx/snippets/tls.conf;
+    server_name portainer.uye.rocks;
+    ssl_certificate ${NGINX_SSL_CERT_PATH};
+    ssl_certificate_key ${NGINX_SSL_KEY_PATH};
+    ssl_trusted_certificate ${NGINX_SSL_CHAIN_PATH};
+    allow 10.0.0.0/24;
+    deny all;
+
+    location / {
+        proxy_pass http://127.0.0.1:9000;
+    }
+}
